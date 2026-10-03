@@ -64,7 +64,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Frame::new()
                 .fill(palette.overlay)
                 .stroke(Stroke::new(1.0, palette.outline))
-                .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                .corner_radius(CornerRadius::same(theme::RADIUS))
                 .inner_margin(Margin::same(10))
                 .shadow(palette.float_shadow())
                 .show(ui, |ui| {
@@ -422,7 +422,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                     Frame::new()
                         .fill(palette.overlay)
                         .stroke(Stroke::new(1.0, palette.outline))
-                        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                        .corner_radius(CornerRadius::same(theme::RADIUS))
                         .inner_margin(Margin::same(FRAME_MARGIN))
                         .shadow(palette.float_shadow())
                         .show(ui, |ui| {

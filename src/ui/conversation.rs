@@ -1000,28 +1000,47 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ))
                     .tab_stop(Stop::Attach);
                     composer_tools_menu(app, chat, &tools);
-                    // Plus and emoji sit close together, as a pair.
+                    // Plus, emoji, and sticker sit close together.
                     ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
                     let smile = last_line(ui, line, |ui| theme::icon_button(
                         ui,
                         Icon::Smile,
                         22.0,
-                        if app.picker.is_some() {
+                        if app.picker == Some(PickerTab::Emoji) || app.picker == Some(PickerTab::Gifs) {
                             palette.accent
                         } else {
                             palette.secondary
                         },
                         palette.text,
-                        "Emoji, GIFs, and stickers",
+                        &crate::i18n::gettext(app.locale, "Emoji"),
                     )).tab_stop(Stop::Emoji);
-                    app.picker_anchor = Some(smile.rect);
+                    ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
+                    let sticker = last_line(ui, line, |ui| theme::icon_button(
+                        ui,
+                        Icon::Sticker,
+                        22.0,
+                        if app.picker == Some(PickerTab::Stickers) {
+                            palette.accent
+                        } else {
+                            palette.secondary
+                        },
+                        palette.text,
+                        &crate::i18n::gettext(app.locale, "Stickers"),
+                    )).tab_stop(Stop::Stickers);
+                    app.picker_anchor = Some(smile.rect.union(sticker.rect));
                     if smile.clicked() {
                         if app.composer_tools_open {
                             app.actions.push(Action::SetComposerTools(false));
                         }
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
                     }
-                    // The text follows the pair as closely as the emoji
+                    if sticker.clicked() {
+                        if app.composer_tools_open {
+                            app.actions.push(Action::SetComposerTools(false));
+                        }
+                        app.actions.push(Action::TogglePicker(PickerTab::Stickers));
+                    }
+                    // The text follows the controls as closely as the emoji
                     // follows the plus (the field's own left margin included).
                     ui.add_space(COMPOSER_TEXT_GAP - ui.spacing().item_spacing.x - 8.0);
                 }
@@ -1264,7 +1283,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             },
                     );
                 });
-            theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
+            theme::focus_outline(ui, id, pill.response.rect, f32::from(composer_radius(&palette)));
             ui.ctx()
                 .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
             if (send_key || send_click)
@@ -1349,8 +1368,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
-/// Corner radius of the composer's rounded field.
+/// Corner radius of the composer's field.
 const COMPOSER_RADIUS: u8 = 24;
+
+fn composer_radius(palette: &Palette) -> u8 {
+    if palette.is_system24() {
+        0
+    } else {
+        COMPOSER_RADIUS
+    }
+}
 /// Padding around the text of a one-line composer row. The row, and the send
 /// and record button, are one text line plus this; the controls are centred
 /// on it.
@@ -1415,19 +1442,28 @@ fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) ->
         .inner
 }
 
-/// The rounded field that holds the composer's controls, or the recorder.
+/// The field that holds the composer's controls, or the recorder.
 fn composer_pill(palette: &Palette) -> Frame {
-    Frame::new()
+    let is_retro = palette.is_system24();
+    let mut frame = Frame::new()
         .fill(palette.bubble_in)
-        .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
+        .corner_radius(CornerRadius::same(if is_retro {
+            0
+        } else {
+            COMPOSER_RADIUS
+        }))
         // The end buttons are inset by as much at the sides as above and
-        // below, so they sit evenly in the rounded ends.
+        // below, so they sit evenly in the ends.
         .inner_margin(Margin {
             left: COMPOSER_INSET,
             right: COMPOSER_INSET,
             top: COMPOSER_INSET,
             bottom: COMPOSER_INSET,
-        })
+        });
+    if is_retro {
+        frame = frame.stroke(Stroke::new(1.0, palette.outline));
+    }
+    frame
 }
 
 /// The plus menu beside the composer: send files or create a poll.
@@ -1478,7 +1514,7 @@ fn strip_gap(ui: &mut egui::Ui) {
 
 /// Corner radius of the strips above the composer and of its suggestion
 /// lists: rounder than a bubble, closer to the composer's own ends.
-const STRIP_RADIUS: u8 = 16;
+const STRIP_RADIUS: u8 = 0;
 
 /// The frame of a strip above the composer (reply, edit, unsent voice).
 /// Like the composer it takes the incoming bubble's colour, which in the
@@ -1488,6 +1524,7 @@ const STRIP_RADIUS: u8 = 16;
 fn strip_frame(palette: &Palette) -> Frame {
     Frame::new()
         .fill(palette.bubble_in)
+        .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(STRIP_RADIUS))
         .inner_margin(Margin {
             left: 14,
@@ -1502,6 +1539,7 @@ fn strip_frame(palette: &Palette) -> Frame {
 fn suggestion_frame(palette: &Palette) -> Frame {
     Frame::new()
         .fill(palette.bubble_in)
+        .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(STRIP_RADIUS))
         .inner_margin(Margin::same(SUGGESTION_INSET))
 }
@@ -1509,7 +1547,7 @@ fn suggestion_frame(palette: &Palette) -> Frame {
 /// Space between a suggestion list's edge and its rows.
 const SUGGESTION_INSET: i8 = 4;
 /// A suggestion row's corners, concentric with the list's.
-const SUGGESTION_ROW_RADIUS: f32 = (STRIP_RADIUS as i8 - SUGGESTION_INSET) as f32;
+const SUGGESTION_ROW_RADIUS: f32 = 0.0;
 
 fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
     let palette = app.palette;
@@ -1700,6 +1738,13 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
 }
 
 fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    let chat_id = egui::Id::new("autoscroll-chat");
+    ui.ctx().data_mut(|data| {
+        if data.get_temp::<String>(chat_id).as_ref() != Some(&chat.id) {
+            data.remove::<egui::Pos2>(autoscroll_id());
+            data.insert_temp(chat_id, chat.id.clone());
+        }
+    });
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
@@ -1793,17 +1838,30 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .as_ref()
         .filter(|sweep| sweep.chat == chat.id)
         .map(|sweep| (sweep.anchor.clone(), sweep.to.clone()));
-    if app.sweep.is_some() && (sweep.is_none() || !ui.input(|input| input.pointer.primary_down())) {
+    if app.sweep.is_some()
+        && (sweep.is_none()
+            || !ui.input(|input| {
+                input.pointer.primary_down() && (input.modifiers.command || input.modifiers.ctrl)
+            }))
+    {
         actions.push(Action::EndSweep);
     }
-    let sweep = sweep.filter(|_| ui.input(|input| input.pointer.primary_down()));
+    let sweep = sweep.filter(|_| {
+        ui.input(|input| {
+            input.pointer.primary_down() && (input.modifiers.command || input.modifiers.ctrl)
+        })
+    });
     let sweep_pointer = ui.input(|input| input.pointer.latest_pos());
     // The row under the pointer: the last laid-out row whose top it is
     // below, or the first one when it is above them all.
     let mut swept_to: Option<&str> = None;
     let mut first_row: Option<&str> = None;
-    let scroll_to_bottom =
-        app.scroll_to_bottom && divider.as_ref().is_none_or(|(.., placed)| *placed);
+    let autoscrolling = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::Pos2>(autoscroll_id()).is_some());
+    let scroll_to_bottom = app.scroll_to_bottom
+        && !autoscrolling
+        && divider.as_ref().is_none_or(|(.., placed)| *placed);
     // The message a quote or search result jumped to flashes once in view.
     let jump = app
         .jump_highlight
@@ -1905,6 +1963,41 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     vec2(0.0, carried),
                     egui::style::ScrollAnimation::none(),
                 );
+            }
+
+            // Mouse3 events are consumed by SelectionLeash before egui's
+            // text-selection widgets see them. The anchor stays active only
+            // while Mouse3 is held; its release cancels it.
+            let anchor = ui
+                .ctx()
+                .data(|data| data.get_temp::<egui::Pos2>(autoscroll_id()));
+            if let Some(anchor) = anchor {
+                key_scroll = None;
+                if let Some(current) = ui.input(|input| input.pointer.hover_pos()) {
+                    let dt = ui.input(|input| input.stable_dt.min(0.1));
+                    let delta = autoscroll_delta(current.y - anchor.y, dt);
+                    ui.scroll_with_delta_animation(
+                        vec2(0.0, delta),
+                        egui::style::ScrollAnimation::none(),
+                    );
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                ui.ctx().request_repaint();
+                let painter = ui.painter();
+                painter.circle_filled(anchor, 13.0, palette.panel.gamma_multiply(0.9));
+                painter.circle_stroke(anchor, 13.0, Stroke::new(1.5, palette.accent));
+                painter.circle_filled(anchor, 3.0, palette.accent);
+                for direction in [-1.0, 1.0] {
+                    for side in [-1.0, 1.0] {
+                        painter.line_segment(
+                            [
+                                anchor + vec2(0.0, direction * 8.0),
+                                anchor + vec2(side * 4.0, direction * 4.0),
+                            ],
+                            Stroke::new(1.5, palette.text),
+                        );
+                    }
+                }
             }
             // Keep ordinary conversation-space clicks useful: after reading,
             // the next keystroke should go straight to the composer. Register
@@ -2088,8 +2181,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 ui.ctx().request_repaint();
                             }
                         }
-                        if let (Some(selected), Some(response)) = (&selection, &response) {
-                            if selected.contains(&message.id) {
+                        let ctrl_select =
+                            ui.input(|input| input.modifiers.command || input.modifiers.ctrl);
+                        if let Some(response) = &response
+                            && (selection.is_some() || ctrl_select)
+                        {
+                            if selection
+                                .as_ref()
+                                .is_some_and(|selected| selected.contains(&message.id))
+                            {
                                 ui.painter().rect(
                                     response.rect.expand(2.0),
                                     10.0,
@@ -2111,9 +2211,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             let pick = ui.interact(
                                 row,
                                 bubble_id(&chat.id, &message.id).with("pick"),
-                                Sense::click_and_drag(),
+                                if ctrl_select {
+                                    Sense::click_and_drag()
+                                } else {
+                                    Sense::click()
+                                },
                             );
-                            if pick.drag_started() {
+                            if pick.drag_started_by(egui::PointerButton::Primary)
+                                && ui.input(|input| input.modifiers.command || input.modifiers.ctrl)
+                            {
                                 actions.push(Action::SweepMessages {
                                     anchor: message.id.clone(),
                                     to: message.id.clone(),
@@ -2121,7 +2227,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             }
                             if response.clicked() || pick.clicked() {
                                 let shift = ui.input(|input| input.modifiers.shift);
-                                actions.push(if shift {
+                                actions.push(if selection.is_none() {
+                                    Action::SelectMessage(message.id.clone())
+                                } else if shift {
                                     Action::SelectRange(message.id.clone())
                                 } else {
                                     Action::ToggleSelected(message.id.clone())
@@ -2247,7 +2355,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         output.inner_rect.right_bottom(),
     );
     let reader_scrolled = ui.input(|input| {
-        input.smooth_scroll_delta.y != 0.0
+        autoscrolling
+            || input.smooth_scroll_delta.y != 0.0
             || input
                 .raw
                 .events
@@ -2651,7 +2760,7 @@ fn reaction_affordance(
     let can_reply = view.chat.can_send()
         && !matches!(
             message.content,
-            Content::Revoked | Content::PhoneOnly { .. }
+            Content::Revoked { .. } | Content::PhoneOnly { .. }
         );
     let step = REACTION_AFFORDANCE_SIZE + 4.0;
     let outward = if rect.center().x < bubble.rect.center().x {
@@ -2756,7 +2865,9 @@ fn bubble(
         if strip.clicked() {
             actions.push(Action::FocusComposer);
         }
-        if strip.drag_started() {
+        if strip.drag_started_by(egui::PointerButton::Primary)
+            && ui.input(|input| input.modifiers.command || input.modifiers.ctrl)
+        {
             actions.push(Action::SweepMessages {
                 anchor: message.id.clone(),
                 to: message.id.clone(),
@@ -2838,6 +2949,15 @@ fn bubble(
     response
 }
 
+fn autoscroll_id() -> egui::Id {
+    egui::Id::new("message-autoscroll")
+}
+
+fn autoscroll_delta(distance: f32, dt: f32) -> f32 {
+    let speed = (distance.abs() - 6.0).max(0.0).powf(1.35) * 54.0;
+    -distance.signum() * speed.min(2400.0) * dt
+}
+
 /// Clamps message-selection drags to the view while the pointer is outside it.
 /// This keeps a row under the pointer during edge scrolling. The input hook
 /// adjusts positions before egui processes them, using the previous frame's
@@ -2845,6 +2965,7 @@ fn bubble(
 pub struct SelectionLeash {
     pub view: std::sync::Arc<std::sync::Mutex<Option<Rect>>>,
     holding: bool,
+    middle_held: bool,
 }
 
 impl SelectionLeash {
@@ -2852,6 +2973,7 @@ impl SelectionLeash {
         Self {
             view,
             holding: false,
+            middle_held: false,
         }
     }
 }
@@ -2864,6 +2986,7 @@ impl egui::plugin::Plugin for SelectionLeash {
     fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         let Some(view) = *self.view.lock().unwrap_or_else(|p| p.into_inner()) else {
             self.holding = false;
+            ctx.data_mut(|data| data.remove::<egui::Pos2>(autoscroll_id()));
             return;
         };
         // The chat list's resize handle reaches into the view from its left
@@ -2874,6 +2997,49 @@ impl egui::plugin::Plugin for SelectionLeash {
         let inside = |pos: &egui::Pos2| {
             view.contains(*pos) && pos.x >= view.left() + handle && pos.x < view.right() - 16.0
         };
+        // egui label selection accepts any pointer button. Own Mouse3 in
+        // the transcript at the raw-input boundary, including its release.
+        let mut anchor = ctx.data(|data| data.get_temp::<egui::Pos2>(autoscroll_id()));
+        if !input.focused {
+            anchor = None;
+        }
+        input.events.retain(|event| {
+            match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Middle,
+                    pressed,
+                    ..
+                } => {
+                    if *pressed && (inside(pos) || anchor.is_some()) {
+                        self.middle_held = true;
+                        anchor = Some(*pos);
+                        return false;
+                    }
+                    if !*pressed && self.middle_held {
+                        self.middle_held = false;
+                        anchor = None;
+                        return false;
+                    }
+                }
+                egui::Event::PointerButton { pressed: true, .. }
+                | egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    ..
+                }
+                | egui::Event::MouseWheel { .. } => anchor = None,
+                _ => {}
+            }
+            true
+        });
+        ctx.data_mut(|data| {
+            if let Some(anchor) = anchor {
+                data.insert_temp(autoscroll_id(), anchor);
+            } else {
+                data.remove::<egui::Pos2>(autoscroll_id());
+            }
+        });
         let mut gone = Vec::new();
         for (index, event) in input.events.iter_mut().enumerate() {
             match event {
@@ -3014,7 +3180,7 @@ pub fn edge_scroll(pointer: f32, top: f32, bottom: f32) -> f32 {
 
 /// Starts a reply when the response was double-clicked, as the menu's "Reply".
 fn reply_on_double_click(response: &egui::Response, message: &Message, actions: &mut Vec<Action>) {
-    if response.double_clicked() && !matches!(message.content, Content::Revoked) {
+    if response.double_clicked() && !matches!(message.content, Content::Revoked { .. }) {
         actions.push(Action::Reply(message.id.clone()));
     }
 }
@@ -3261,6 +3427,19 @@ fn bubble_frame(
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
     let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::CLICK));
+    if matches!(message.content, Content::Revoked { .. }) {
+        if bubble.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if bubble.clicked() {
+            let reveal_id = egui::Id::new(("reveal_revoked", &message.chat, &message.id));
+            let revealed = ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(reveal_id))
+                .unwrap_or(false);
+            ui.ctx().data_mut(|d| d.insert_temp(reveal_id, !revealed));
+        }
+    }
     theme::reveal_focus(&bubble);
     theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
     if ui.ctx().data(|data| {
@@ -3492,6 +3671,11 @@ fn quote_block(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    let quote_radius = if palette.is_system24() {
+        0
+    } else {
+        QUOTE_RADIUS
+    };
     let mine = view.me == Some(quoted.sender.as_str());
     let who = if mine {
         "You".to_owned()
@@ -3518,7 +3702,7 @@ fn quote_block(
     );
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
-        .corner_radius(CornerRadius::same(QUOTE_RADIUS))
+        .corner_radius(CornerRadius::same(quote_radius))
         .inner_margin(Margin {
             left: QUOTE_BAR as i8 + 7,
             right: 10,
@@ -3546,8 +3730,8 @@ fn quote_block(
     ui.painter().rect_filled(
         bar,
         CornerRadius {
-            nw: QUOTE_RADIUS,
-            sw: QUOTE_RADIUS,
+            nw: quote_radius,
+            sw: quote_radius,
             ne: 0,
             se: 0,
         },
@@ -4025,14 +4209,14 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         },
     );
     widgets::menu_separator(ui, &palette);
-    if !matches!(message.content, Content::Revoked)
+    if !matches!(message.content, Content::Revoked { .. })
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
         actions.push(Action::Reply(message.id.clone()));
     }
     if !matches!(
         message.content,
-        Content::Revoked
+        Content::Revoked { .. }
             | Content::Unsupported { .. }
             | Content::PhoneOnly { .. }
             | Content::Poll { .. }
@@ -4076,7 +4260,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         && matches!(message.content, Content::Text { .. })
         && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
     let can_revoke = message.from_me
-        && !matches!(message.content, Content::Revoked)
+        && !matches!(message.content, Content::Revoked { .. })
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
     if can_edit && widgets::menu_item(ui, &palette, Some(Icon::Pencil), "Edit") {
         actions.push(Action::Edit(message.id.clone()));
@@ -4170,7 +4354,7 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
     // The menu holds actions only. Sent, delivery, and read times, per member
     // in a group, live in "Message info".
     if message.from_me
-        && !matches!(message.content, Content::Revoked)
+        && !matches!(message.content, Content::Revoked { .. })
         && !matches!(
             message.status,
             Delivery::None | Delivery::Pending | Delivery::Failed
@@ -4743,23 +4927,229 @@ fn content(
             );
             None
         }
-        Content::Revoked => {
-            mirrored_row(
+        Content::Revoked { deleted_content } => {
+            let reveal_id = egui::Id::new(("reveal_revoked", &message.chat, &message.id));
+            let revealed = ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(reveal_id))
+                .unwrap_or(false);
+
+            let text = if message.from_me {
+                crate::i18n::gettext(view.locale, "You deleted this message")
+            } else {
+                crate::i18n::gettext(view.locale, "This message was deleted")
+            };
+            // Measure the status and time together, just like a short text
+            // message. Returning this slot prevents a separate timestamp row.
+            let label = widgets::line(
                 ui,
-                own,
-                |ui| {
-                    theme::icon(ui, Icon::Ban, 14.0, palette.dim);
-                },
-                |ui| {
-                    theme::text(
-                        ui,
-                        "This message was deleted",
-                        theme::regular(13.5),
-                        palette.secondary,
-                    );
-                },
+                &text,
+                theme::regular(13.5),
+                palette.secondary,
+                (width - reserve - 30.0).max(0.0),
+                1,
             );
-            None
+            let (header, _) = ui.allocate_exact_size(
+                vec2(
+                    (label.size().x + 30.0 + reserve).min(width),
+                    label.size().y.max(15.0),
+                ),
+                Sense::hover(),
+            );
+            theme::paint_icon(
+                ui,
+                Icon::Ban,
+                Rect::from_center_size(
+                    pos2(header.left() + 7.0, header.center().y),
+                    Vec2::splat(14.0),
+                ),
+                14.0,
+                palette.dim,
+            );
+            label.paint(
+                ui,
+                pos2(
+                    header.left() + 22.0,
+                    header.center().y - label.size().y / 2.0,
+                ),
+                palette.secondary,
+            );
+            let time_slot = Rect::from_min_size(
+                pos2(header.right() - reserve, header.top()),
+                vec2(reserve, header.height()),
+            );
+
+            if revealed {
+                ui.add_space(6.0);
+                let card_radius = if palette.is_system24() { 0 } else { 6 };
+                if let Some(deleted) = deleted_content {
+                    let cap = (width - 16.0).max(0.0);
+                    let description = match deleted.as_ref() {
+                        Content::Text { text, .. } => text.as_str(),
+                        other => &other.summary(),
+                    };
+                    let galley = ui.painter().layout(
+                        description.into(),
+                        theme::regular(13.5),
+                        palette.text,
+                        cap,
+                    );
+                    let text_width = galley
+                        .rows
+                        .iter()
+                        .map(|row| row.row.size.x)
+                        .fold(0.0, f32::max);
+                    let title_width = ui
+                        .painter()
+                        .layout_no_wrap(
+                            "Silinen İçerik".into(),
+                            theme::semibold(12.0),
+                            palette.accent,
+                        )
+                        .size()
+                        .x
+                        + 24.0;
+                    let card_width = text_width.max(title_width).min(cap);
+                    Frame::new()
+                        .stroke(Stroke::new(1.0, palette.outline))
+                        .fill(palette.surface_hover)
+                        .corner_radius(CornerRadius::same(card_radius))
+                        .inner_margin(Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.set_width(card_width);
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    theme::icon(ui, Icon::Info, 13.0, palette.accent);
+                                    ui.add_space(2.0);
+                                    widgets::rich_text(
+                                        ui,
+                                        "Silinen İçerik",
+                                        theme::semibold(12.0),
+                                        palette.accent,
+                                    );
+                                });
+                                ui.add_space(4.0);
+                                match deleted.as_ref() {
+                                    Content::Text { text, .. } => {
+                                        widgets::rich_text(
+                                            ui,
+                                            text,
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Image { caption, .. } => {
+                                        let desc = caption.as_deref().unwrap_or("Fotoğraf");
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("📷 {desc}"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Video { caption, .. } => {
+                                        let desc = caption.as_deref().unwrap_or("Video");
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("🎥 {desc}"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Audio { .. } => {
+                                        widgets::rich_text(
+                                            ui,
+                                            "🎤 Sesli Mesaj",
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Sticker { .. } => {
+                                        widgets::rich_text(
+                                            ui,
+                                            "🏷️ Çıkartma",
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Document {
+                                        file_name, caption, ..
+                                    } => {
+                                        let name = if file_name.is_empty() {
+                                            "Belge"
+                                        } else {
+                                            file_name.as_str()
+                                        };
+                                        let desc = caption
+                                            .as_deref()
+                                            .map(|c| format!(" - {c}"))
+                                            .unwrap_or_default();
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("📄 {name}{desc}"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Contact { display_name, .. } => {
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("👤 Kişi: {display_name}"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Location { name, address, .. } => {
+                                        let desc = name
+                                            .as_deref()
+                                            .or(address.as_deref())
+                                            .unwrap_or("Konum");
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("📍 {desc}"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    Content::Poll {
+                                        question, options, ..
+                                    } => {
+                                        let opts = options.join(", ");
+                                        widgets::rich_text(
+                                            ui,
+                                            &format!("📊 Anket: {question} ({opts})"),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                    other => {
+                                        widgets::rich_text(
+                                            ui,
+                                            &other.summary(),
+                                            theme::regular(13.5),
+                                            palette.text,
+                                        );
+                                    }
+                                }
+                            });
+                        });
+                } else {
+                    Frame::new()
+                        .stroke(Stroke::new(1.0, palette.outline))
+                        .fill(palette.surface_hover)
+                        .corner_radius(CornerRadius::same(card_radius))
+                        .inner_margin(Margin::same(8))
+                        .show(ui, |ui| {
+                            widgets::rich_text(
+                                ui,
+                                "Bu mesaj silinmeden önce yerel belleğe alınamadı.",
+                                theme::regular(12.0),
+                                palette.dim,
+                            );
+                        });
+                }
+            }
+            Some(time_slot)
         }
         Content::PhoneOnly {
             live_location: true,
@@ -7065,6 +7455,18 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autoscroll_speed_has_dead_zone_direction_and_frame_independence() {
+        assert_eq!(autoscroll_delta(5.0, 0.1), 0.0);
+        assert!(autoscroll_delta(50.0, 0.1) < 0.0);
+        assert!(autoscroll_delta(-50.0, 0.1) > 0.0);
+        assert_eq!(
+            autoscroll_delta(50.0, 0.1),
+            autoscroll_delta(50.0, 0.05) * 2.0
+        );
+        assert_eq!(autoscroll_delta(10000.0, 0.1), -240.0);
+    }
 
     #[test]
     fn sender_pictures_show_in_groups_only() {

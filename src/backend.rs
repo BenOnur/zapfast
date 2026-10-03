@@ -778,6 +778,11 @@ pub enum Event {
         chat: ChatId,
         paths: Vec<PathBuf>,
     },
+    /// New live text candidate for automatic replies, independent of read state.
+    AutoReplyIncoming {
+        chat: ChatId,
+        message: Box<Message>,
+    },
     /// Live incoming message for desktop notification.
     Incoming {
         chat: ChatId,

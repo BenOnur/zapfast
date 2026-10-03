@@ -452,6 +452,25 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
+    let mut auto_replies = Section::new(translated(locale, "Automatic replies"));
+    auto_replies.row(
+        translated(locale, "Enable automatic replies"),
+        translated(
+            locale,
+            "Select friends or groups below. ZapFast must be running and connected.",
+        ),
+        |ui, app| {
+            let mut enabled = app.account().settings.auto_reply_enabled;
+            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
+                app.actions.push(Action::SetAutoReplyEnabled(enabled));
+            }
+        },
+    );
+    auto_replies.block(
+        vec![translated(locale, "Commands and replies")],
+        auto_reply_editor,
+    );
+
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
         translated(locale, "Desktop notifications"),
@@ -769,6 +788,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
+        auto_replies,
         notifications,
         privacy,
         system,
@@ -776,6 +796,114 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+fn auto_reply_editor(ui: &mut egui::Ui, app: &mut App) {
+    use crate::i18n::gettext;
+    let locale = app.locale;
+    let mut rules = app.account().settings.auto_reply_rules.clone();
+    let mut changed = false;
+    let mut remove = None;
+    ui.label(gettext(
+        locale,
+        "Commands must start with / and match the whole message. First matching rule wins.",
+    ));
+    for (index, rule) in rules.iter_mut().enumerate() {
+        ui.push_id(("auto-reply-rule", index), |ui| {
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut rule.command)
+                            .hint_text("/merhaba")
+                            .desired_width((ui.available_width() - 80.0).max(80.0)),
+                    )
+                    .changed();
+                if ui.small_button(gettext(locale, "Remove")).clicked() {
+                    remove = Some(index);
+                }
+            });
+            changed |= ui
+                .add(
+                    egui::TextEdit::multiline(&mut rule.reply)
+                        .hint_text(gettext(locale, "Reply text"))
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed();
+            ui.add_space(8.0);
+        });
+    }
+    if let Some(index) = remove {
+        rules.remove(index);
+        changed = true;
+    }
+    if ui.button(gettext(locale, "Add command")).clicked() {
+        rules.push(Default::default());
+        changed = true;
+    }
+    ui.label(format!(
+        "{}: {}",
+        gettext(locale, "Selected chats"),
+        app.account().settings.auto_reply_chats.len()
+    ));
+    if changed {
+        app.actions.push(Action::SetAutoReplyRules(rules));
+    }
+    ui.add_space(8.0);
+    if app.account().settings.auto_reply_chats.is_empty() {
+        ui.label(gettext(
+            locale,
+            "No chats selected: automatic replies will not be sent.",
+        ));
+    }
+    let filter_id = egui::Id::new("auto-reply-chat-search");
+    let mut search: String = ui.data_mut(|d| d.get_temp(filter_id).unwrap_or_default());
+    ui.add(
+        egui::TextEdit::singleline(&mut search)
+            .hint_text(gettext(locale, "Search friends and groups")),
+    );
+    ui.data_mut(|d| d.insert_temp(filter_id, search.clone()));
+    let needle = crate::util::search_key(&search);
+    let mut actions = Vec::new();
+    egui::ScrollArea::vertical()
+        .id_salt("auto-reply-chat-choices")
+        .max_height(180.0)
+        .show(ui, |ui| {
+            for chat in app
+                .chats
+                .iter()
+                .filter(|chat| chat.can_send() && !chat.is_channel())
+            {
+                let title = app.chat_title(chat);
+                if !crate::util::search_key(&title).contains(&needle) {
+                    continue;
+                }
+                let label = if chat.is_group() {
+                    format!("{} ({})", title, gettext(locale, "Group"))
+                } else {
+                    title
+                };
+                let mut selected = app.account().settings.auto_reply_chats.contains(&chat.id);
+                if ui
+                    .push_id(("auto-reply-chat", &chat.id), |ui| {
+                        ui.checkbox(&mut selected, label)
+                    })
+                    .inner
+                    .changed()
+                {
+                    actions.push(Action::SetAutoReplyChat(chat.id.clone(), selected));
+                }
+            }
+        });
+    app.actions.extend(actions);
+    ui.label(gettext(
+        locale,
+        if app.account().settings_save_failed {
+            "Settings could not be saved; changes will be retried."
+        } else {
+            "Changes are saved automatically."
+        },
+    ));
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form

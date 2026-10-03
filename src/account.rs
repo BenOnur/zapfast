@@ -22,6 +22,10 @@ pub struct Account {
     pub dirs: AccountDirs,
     pub settings: AccountSettings,
     pub(crate) settings_dirty: bool,
+    pub settings_save_failed: bool,
+    pub(crate) last_settings_save: Instant,
+    pub(crate) auto_reply_recent: std::collections::VecDeque<(String, String)>,
+    pub(crate) auto_reply_pending: std::collections::VecDeque<crate::app::PendingAutoReply>,
     pub backend: Backend,
     pub link: LinkStatus,
     pub syncing: bool,
@@ -88,6 +92,10 @@ impl Account {
             dirs,
             settings,
             settings_dirty: false,
+            settings_save_failed: false,
+            last_settings_save: Instant::now(),
+            auto_reply_recent: Default::default(),
+            auto_reply_pending: Default::default(),
             backend,
             link: LinkStatus::Starting,
             syncing: false,
@@ -239,9 +247,17 @@ impl Account {
     }
 
     pub fn save_settings(&mut self) {
-        self.settings_dirty = false;
-        if let Err(error) = self.settings.save(&self.dirs.settings_file()) {
-            log::warn!("could not save account settings: {error}");
+        self.last_settings_save = Instant::now();
+        match self.settings.save(&self.dirs.settings_file()) {
+            Ok(()) => {
+                self.settings_dirty = false;
+                self.settings_save_failed = false;
+            }
+            Err(error) => {
+                self.settings_dirty = true;
+                self.settings_save_failed = true;
+                log::warn!("could not save account settings: {error}");
+            }
         }
     }
 }

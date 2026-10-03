@@ -59,6 +59,9 @@ pub fn theme_status(status: fastframe_theme::Status) -> &'static str {
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Palette {
+    /// Runtime appearance, resolved from the selected theme's filename.
+    #[serde(skip)]
+    pub system24: bool,
     pub dark: bool,
     pub window: Color32,
     pub panel: Color32,
@@ -88,8 +91,13 @@ pub struct Palette {
 }
 
 impl Palette {
+    pub fn is_system24(&self) -> bool {
+        self.system24
+    }
+
     pub fn dark() -> Self {
         Self {
+            system24: false,
             dark: true,
             window: Color32::from_rgb(0x0b, 0x14, 0x1a),
             panel: Color32::from_rgb(0x11, 0x1b, 0x21),
@@ -119,6 +127,7 @@ impl Palette {
 
     pub fn light() -> Self {
         Self {
+            system24: false,
             dark: false,
             window: Color32::from_rgb(0xf0, 0xf2, 0xf5),
             panel: Color32::from_rgb(0xff, 0xff, 0xff),
@@ -417,12 +426,22 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.hyperlink_color = palette.link;
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
     visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
-    visuals.window_stroke = Stroke::new(1.0, palette.outline);
-    visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
-    visuals.menu_corner_radius = CornerRadius::same(RADIUS);
+    let is_system24 = palette.is_system24();
+    set_retro_theme(ctx, is_system24);
+    if is_system24 {
+        visuals.window_corner_radius = CornerRadius::ZERO;
+        visuals.menu_corner_radius = CornerRadius::ZERO;
+    } else {
+        visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
+        visuals.menu_corner_radius = CornerRadius::same(RADIUS);
+    }
     visuals.window_shadow = palette.modal_shadow();
     visuals.popup_shadow = palette.float_shadow();
-    let corner = CornerRadius::same(RADIUS_SMALL + 2);
+    let corner = if is_system24 {
+        CornerRadius::ZERO
+    } else {
+        CornerRadius::same(RADIUS_SMALL + 2)
+    };
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,
@@ -430,13 +449,21 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
         &mut visuals.widgets.open,
     ] {
         widget.corner_radius = corner;
-        widget.bg_stroke = Stroke::NONE;
+        widget.bg_stroke = if is_system24 {
+            Stroke::new(1.0, palette.outline)
+        } else {
+            Stroke::NONE
+        };
         widget.fg_stroke = Stroke::new(1.0, palette.text);
         widget.expansion = 0.0;
     }
     visuals.widgets.noninteractive.corner_radius = corner;
     visuals.widgets.noninteractive.bg_fill = palette.panel;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.outline);
+    visuals.widgets.noninteractive.bg_stroke = if is_system24 {
+        Stroke::new(1.0, palette.outline)
+    } else {
+        Stroke::NONE
+    };
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette.text);
     visuals.widgets.inactive.bg_fill = palette.surface;
     visuals.widgets.inactive.weak_bg_fill = palette.surface;
@@ -488,6 +515,23 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     ctx.set_global_style(style);
 }
 
+pub fn set_retro_theme(ctx: &egui::Context, retro: bool) {
+    let changed = ctx.data_mut(|data| {
+        let id = egui::Id::new("system24-font");
+        let previous = data.get_temp::<bool>(id).unwrap_or(false);
+        data.insert_temp(id, retro);
+        previous != retro
+    });
+    if changed {
+        install_fonts(ctx);
+    }
+}
+
+fn is_retro_theme(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::new("system24-font")))
+        .unwrap_or(false)
+}
+
 /// Whether the interface is drawn in the bundled Inter instead of the
 /// platform's font (Settings, Appearance, Font).
 static INTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -521,11 +565,30 @@ fn primary_font() -> fastframe_fonts::Primary {
 /// where there is none), egui's own fonts behind it, and installed fonts
 /// for the scripts it lacks, hinted as the desktop asks. Inter also draws
 /// the [`tabular`] timers.
+const DM_MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/DMMono-Regular.ttf");
+const DM_MONO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/DMMono-Medium.ttf");
+
 fn install_fonts(ctx: &egui::Context) {
     let primary = primary_font();
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
+
+    if is_retro_theme(ctx) {
+        fonts.font_data.insert(
+            "dm-mono-regular".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(DM_MONO_REGULAR)),
+        );
+        fonts.font_data.insert(
+            "dm-mono-medium".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(DM_MONO_MEDIUM)),
+        );
+
+        for family in fonts.families.values_mut() {
+            family.insert(0, "dm-mono-regular".to_owned());
+        }
+    }
+
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
@@ -1165,6 +1228,39 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system24_fonts_and_corners_restore_when_leaving_the_theme() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut palette = Palette::dark();
+        palette.system24 = true;
+        apply(&ctx, &palette);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let width = |text: &str| {
+            ctx.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(text.into(), regular(14.0), Color32::WHITE)
+                    .size()
+                    .x
+            })
+        };
+        assert!((width("iiii") - width("WWWW")).abs() < 0.1);
+        assert_eq!(
+            ctx.global_style().visuals.window_corner_radius,
+            CornerRadius::ZERO
+        );
+        palette.system24 = false;
+        apply(&ctx, &palette);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        assert!(width("WWWW") > width("iiii"));
+        assert_ne!(
+            ctx.global_style().visuals.window_corner_radius,
+            CornerRadius::ZERO
+        );
+    }
 
     /// Timers count in Inter's tabular figures whatever face draws the
     /// rest, and fall back like the interface text of their weight.

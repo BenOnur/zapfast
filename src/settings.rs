@@ -363,6 +363,14 @@ pub enum NotificationSound {
     Custom(std::path::PathBuf),
 }
 
+/// A local command matched against a complete incoming text message.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoReplyRule {
+    pub command: String,
+    pub reply: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -396,6 +404,10 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// Local automatic replies, only in explicitly selected chats.
+    pub auto_reply_enabled: bool,
+    pub auto_reply_rules: Vec<AutoReplyRule>,
+    pub auto_reply_chats: Vec<String>,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -487,6 +499,9 @@ impl Default for Settings {
             sidebar_width: 320.0,
             search_pane_width: 380.0,
             enter_sends: true,
+            auto_reply_enabled: false,
+            auto_reply_rules: Vec::new(),
+            auto_reply_chats: Vec::new(),
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
@@ -558,7 +573,11 @@ impl Settings {
         } else {
             None
         };
-        theme.map(|theme| theme.palette)
+        theme.map(|theme| {
+            let mut palette = theme.palette;
+            palette.system24 = theme.filename.eq_ignore_ascii_case("System24.json");
+            palette
+        })
     }
 
     /// Returns the user key, built-in key, or `None`.
@@ -693,6 +712,9 @@ impl Settings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AccountSettings {
+    pub auto_reply_enabled: bool,
+    pub auto_reply_rules: Vec<AutoReplyRule>,
+    pub auto_reply_chats: Vec<String>,
     pub send_read_receipts: bool,
     pub send_typing: bool,
     #[serde(alias = "auto_download_images")]
@@ -707,6 +729,9 @@ pub struct AccountSettings {
 impl Default for AccountSettings {
     fn default() -> Self {
         Self {
+            auto_reply_enabled: false,
+            auto_reply_rules: Vec::new(),
+            auto_reply_chats: Vec::new(),
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
@@ -721,6 +746,9 @@ impl Default for AccountSettings {
 impl AccountSettings {
     pub fn from_legacy(settings: &Settings) -> Self {
         Self {
+            auto_reply_enabled: settings.auto_reply_enabled,
+            auto_reply_rules: settings.auto_reply_rules.clone(),
+            auto_reply_chats: settings.auto_reply_chats.clone(),
             send_read_receipts: settings.send_read_receipts,
             send_typing: settings.send_typing,
             auto_download: settings.auto_download,
@@ -821,7 +849,77 @@ impl AccountRoster {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn legacy_automatic_replies_migrate_without_enabling_other_accounts() {
+        let legacy = Settings {
+            auto_reply_enabled: true,
+            auto_reply_chats: vec!["fixture@s.whatsapp.net".into()],
+            auto_reply_rules: vec![AutoReplyRule {
+                command: "/hello".into(),
+                reply: "Hello".into(),
+            }],
+            ..Default::default()
+        };
+        let migrated = AccountSettings::from_legacy(&legacy);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        migrated.save(&path).unwrap();
+        assert_eq!(AccountSettings::load(&path), migrated);
+        assert_eq!(migrated.auto_reply_rules, legacy.auto_reply_rules);
+        assert_eq!(migrated.auto_reply_chats, legacy.auto_reply_chats);
+        assert!(migrated.auto_reply_enabled);
+        assert!(!AccountSettings::default().auto_reply_enabled);
+        assert!(AccountSettings::default().auto_reply_chats.is_empty());
+    }
+
+    #[test]
+    fn auto_reply_rules_and_chat_selection_survive_settings_restart() {
+        let old: super::Settings = serde_json::from_str("{}").unwrap();
+        assert!(!old.auto_reply_enabled);
+        assert!(old.auto_reply_chats.is_empty());
+        let chosen = super::Settings {
+            auto_reply_enabled: true,
+            auto_reply_chats: vec!["fixture@s.whatsapp.net".into()],
+            auto_reply_rules: vec![
+                super::AutoReplyRule {
+                    command: "/hello".into(),
+                    reply: "Hello 👋".into(),
+                },
+                super::AutoReplyRule {
+                    command: "/bye".into(),
+                    reply: "Goodbye".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        chosen.save(&path).unwrap();
+        let loaded = super::Settings::load(&path);
+        assert_eq!(loaded.auto_reply_rules, chosen.auto_reply_rules);
+        assert_eq!(loaded.auto_reply_chats, chosen.auto_reply_chats);
+        assert!(loaded.auto_reply_enabled);
+    }
     use super::*;
+
+    #[test]
+    fn system24_appearance_follows_theme_identity_instead_of_colors() {
+        let mut settings = Settings::default();
+        for filename in ["System24.json", "Rose Pine.json", "Different.json"] {
+            settings.custom_theme = Some(filename.into());
+            settings.custom_theme_cache = Some(crate::theme::CustomTheme {
+                filename: filename.into(),
+                palette: crate::theme::Palette::dark(),
+            });
+            let palette = settings.cached_palette().unwrap();
+            assert_eq!(palette.is_system24(), filename == "System24.json");
+            assert_eq!(palette.on_bubble(true).is_system24(), palette.is_system24());
+        }
+        settings.custom_theme = None;
+        settings.theme = ThemeChoice::Light;
+        assert!(settings.cached_palette().is_none());
+    }
 
     #[test]
     fn earlier_bundled_sound_names_still_load() {

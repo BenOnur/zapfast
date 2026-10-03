@@ -251,9 +251,7 @@ msgstr ""
 
 #: src/ui/conversation.rs:1297
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
-msgstr ""
-"Ctrl+Enter gönderir · *kalın* _italik_ ~üstü çizili~ · Ctrl+V görsel "
-"yapıştırır"
+msgstr "Ctrl+Enter gönderir · *kalın* _italik_ ~üstü çizili~ · Ctrl+V görsel yapıştırır"
 
 #: src/ui/conversation.rs:1308
 msgid "Hide shortcut hints (bring them back from Keyboard shortcuts)"
@@ -344,15 +342,11 @@ msgstr "Takip etmek için telefonunuzda WhatsApp'ı açın."
 
 #: src/ui/conversation.rs:4805
 msgid "View once photo. For your privacy, it opens only on your phone."
-msgstr ""
-"Bir kez görüntülenebilen fotoğraf. Gizliliğiniz için yalnızca telefonunuzda "
-"açılır."
+msgstr "Tek seferlik fotoğraf. Gizliliğiniz için yalnızca telefonunuzda açılır."
 
 #: src/ui/conversation.rs:4809
 msgid "View once video. For your privacy, it opens only on your phone."
-msgstr ""
-"Bir kez görüntülenebilen video. Gizliliğiniz için yalnızca telefonunuzda "
-"açılır."
+msgstr "Tek seferlik video. Gizliliğiniz için yalnızca telefonunuzda açılır."
 
 #: src/ui/conversation.rs:4813
 msgid "View once voice message. For your privacy, it opens only on your phone."
@@ -362,15 +356,11 @@ msgstr ""
 
 #: src/ui/conversation.rs:4817
 msgid "View once audio. For your privacy, it opens only on your phone."
-msgstr ""
-"Bir kez dinlenebilen ses kaydı. Gizliliğiniz için yalnızca telefonunuzda "
-"açılır."
+msgstr "Tek seferlik ses. Gizliliğiniz için yalnızca telefonunuzda açılır."
 
 #: src/ui/conversation.rs:4821
 msgid "View once message. For your privacy, it opens only on your phone."
-msgstr ""
-"Bir kez görüntülenebilen mesaj. Gizliliğiniz için yalnızca telefonunuzda "
-"açılır."
+msgstr "Tek seferlik mesaj. Gizliliğiniz için yalnızca telefonunuzda açılır."
 
 #: src/ui/conversation.rs:4823
 msgid "This message can only be seen on your phone."
@@ -667,9 +657,7 @@ msgstr "Grup mesajları için ses çal"
 
 #: src/ui/settings.rs:471
 msgid "When off, only mentions and replies to you make a sound."
-msgstr ""
-"Kapalıyken yalnızca sizden bahsedildiğinde ve size yanıt verildiğinde ses "
-"çıkar."
+msgstr "Kapalıyken yalnızca etiketlemeler ve yanıtlar ses çıkarır."
 
 #: src/ui/settings.rs:479
 msgid "Privacy"
@@ -736,8 +724,7 @@ msgstr "Güncellemeleri denetle"
 
 #: src/ui/settings.rs:590
 msgid "Asks GitHub once a day, sending only the ZapFast version."
-msgstr ""
-"Günde bir kez yalnızca ZapFast sürümünü göndererek GitHub'ı kontrol eder."
+msgstr "Günde bir kez GitHub'ı kontrol eder, yalnızca ZapFast sürümünü gönderir."
 
 #: src/ui/settings.rs:595
 msgid "Download updates automatically"
@@ -758,9 +745,7 @@ msgstr "Ortam değişkeninden {proxy} kullanılıyor."
 
 #: src/ui/settings.rs:619
 msgid "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY."
-msgstr ""
-"WhatsApp, medya ve güncellemeler içindir. Boş bırakılırsa ALL_PROXY veya "
-"HTTPS_PROXY kullanılır."
+msgstr "WhatsApp, medya ve güncellemeler için. Boş bırakılırsa ALL_PROXY veya HTTPS_PROXY kullanılır."
 
 #: src/ui/settings.rs:622
 msgid "Proxy"
@@ -776,9 +761,7 @@ msgstr "GIF araması içindir. Bu sürümdeki yerleşik anahtarın yerine geçer
 
 #: src/ui/settings.rs:651
 msgid "For GIF search. Get a free key at developers.giphy.com."
-msgstr ""
-"GIF araması içindir. developers.giphy.com adresinden ücretsiz bir anahtar "
-"alabilirsiniz."
+msgstr "GIF araması için. developers.giphy.com adresinden ücretsiz anahtar alın."
 
 #: src/ui/settings.rs:667 src/ui/settings.rs:1896 src/ui/settings.rs:1902
 msgid "Account"
@@ -987,8 +970,7 @@ msgstr "Kaydet"
 
 #: src/ui/settings.rs:1557
 msgid "A native WhatsApp client built with Rust, egui, and whatsapp-rust."
-msgstr ""
-"Rust, egui ve whatsapp-rust ile geliştirilmiş yerel bir WhatsApp istemcisi."
+msgstr "Rust, egui ve whatsapp-rust ile geliştirilmiş yerel bir WhatsApp istemcisi."
 
 #: src/ui/settings.rs:1568
 #, rust-format
@@ -1581,3 +1563,71 @@ msgstr ""
 #, rust-format
 msgid "{count} unread chats"
 msgstr ""
+#: src/ui/conversation.rs
+msgid "Back to the message (Esc)"
+msgstr "Mesaja geri dön (Esc)"
+
+#: src/ui/conversation.rs
+msgid "Stickers"
+msgstr "Çıkartmalar"
+
+#: src/ui/conversation.rs
+msgid "Emoji"
+msgstr "Emoji"
+
+#: src/ui/conversation.rs
+msgid "This message was deleted"
+msgstr "Bu mesaj silindi"
+
+#: src/ui/conversation.rs
+msgid "You deleted this message"
+msgstr "Bu mesajı sildiniz"
+
+
+msgid "Automatic replies"
+msgstr "Otomatik yanıtlar"
+
+msgid "Enable automatic replies"
+msgstr "Otomatik yanıtları etkinleştir"
+
+msgid "Choose chats from their right-click menu. ZapFast must be running and connected."
+msgstr "Sohbetleri sağ tık menüsünden seç. ZapFast açık ve bağlı olmalı."
+
+msgid "Commands and replies"
+msgstr "Komutlar ve yanıtlar"
+
+msgid "Commands must start with / and match the whole message. First matching rule wins."
+msgstr "Komut / ile başlamalı ve mesajın tamamıyla eşleşmeli. İlk eşleşen kural çalışır."
+
+msgid "Reply text"
+msgstr "Yanıt metni"
+
+msgid "Add command"
+msgstr "Komut ekle"
+
+msgid "Selected chats"
+msgstr "Seçili sohbetler"
+
+msgid "Disable automatic replies in this chat"
+msgstr "Bu sohbette otomatik yanıtları kapat"
+
+msgid "Enable automatic replies in this chat"
+msgstr "Bu sohbette otomatik yanıtları aç"
+
+msgid "Remove"
+msgstr "Sil"
+
+msgid "Select friends or groups below. ZapFast must be running and connected."
+msgstr "Aşağıdan arkadaşlarını veya grupları seç. ZapFast açık ve bağlı olmalı."
+
+msgid "No chats selected: automatic replies will not be sent."
+msgstr "Sohbet seçilmedi: otomatik yanıt gönderilmez."
+
+msgid "Search friends and groups"
+msgstr "Arkadaş veya grup ara"
+
+msgid "Settings could not be saved; changes will be retried."
+msgstr "Ayarlar kaydedilemedi; kayıt tekrar denenecek."
+
+msgid "Changes are saved automatically."
+msgstr "Değişiklikler otomatik kaydedilir."

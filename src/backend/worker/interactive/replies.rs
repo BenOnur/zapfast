@@ -495,7 +495,7 @@ mod tests {
             source.edited = true;
             assert!(prepare(&source, &request, &jid, 0, choice).is_none());
             source.edited = false;
-            source.content = Content::Revoked;
+            source.content = Content::revoked();
             assert!(prepare(&source, &request, &jid, 0, choice).is_none());
         }
         for (name, json) in [

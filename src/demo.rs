@@ -753,7 +753,13 @@ pub fn populate(app: &mut App) {
                 once: Some(crate::model::OnceMedia::Photo),
             },
         ),
-        message(ada, "ada-deleted", false, older + 60 * 25, Content::Revoked),
+        message(
+            ada,
+            "ada-deleted",
+            false,
+            older + 60 * 25,
+            Content::revoked(),
+        ),
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
     conversation.messages.splice(0..0, extra);
@@ -4023,7 +4029,7 @@ mod tests {
         assert!(
             ada.messages
                 .iter()
-                .any(|m| matches!(m.content, Content::Revoked))
+                .any(|m| matches!(m.content, Content::Revoked { .. }))
         );
         assert!(ada.messages.iter().any(|m| m.quoted.is_some()));
     }
@@ -4415,6 +4421,16 @@ mod tests {
             },
         );
         output.textures_delta.clear();
+    }
+
+    fn ctrl_frame(app: &mut App, ctx: &egui::Context, mut events: Vec<egui::Event>) {
+        for event in &mut events {
+            if let egui::Event::PointerButton { modifiers, .. } = event {
+                *modifiers = egui::Modifiers::COMMAND;
+            }
+        }
+        events.insert(0, egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+        frame_with(app, ctx, events);
     }
 
     /// Lets an eased key scroll's animation settle: tests advance time by the
@@ -5782,6 +5798,120 @@ mod tests {
             .is_some_and(|plugin| plugin.lock().has_selection())
     }
 
+    #[test]
+    fn deleted_message_and_revealed_content_keep_time_inline_and_fit_content() {
+        let (mut app, ctx, chat) = sweep_chat(4);
+        let message = app
+            .conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .last_mut()
+            .unwrap();
+        message.content = Content::Revoked {
+            deleted_content: Some(Box::new(Content::text("Synthetic retained text"))),
+        };
+        let id = message.id.clone();
+        render(&mut app, &ctx);
+        let collapsed = drawn_rect(&ctx, &chat, &id, "rect");
+        let time = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::footer_id(&chat, &id))
+            })
+            .unwrap();
+        assert!(collapsed.height() < 35.0, "{collapsed:?}");
+        assert!((time.center().y - collapsed.center().y).abs() < 2.0);
+        let click = collapsed.center();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(click), primary(click, true)],
+        );
+        frame_with(&mut app, &ctx, vec![primary(click, false)]);
+        render(&mut app, &ctx);
+        let expanded = drawn_rect(&ctx, &chat, &id, "rect");
+        let time = ctx
+            .data(|data| {
+                data.get_temp::<egui::Rect>(crate::ui::conversation::footer_id(&chat, &id))
+            })
+            .unwrap();
+        assert!(expanded.height() > collapsed.height());
+        assert!(expanded.height() < 110.0, "{expanded:?}");
+        assert!(
+            (time.center().y - expanded.top() - 6.0 - (collapsed.height() - 11.0) / 2.0).abs()
+                < 2.0
+        );
+        assert!(
+            expanded.width() <= collapsed.width() + 2.0,
+            "{collapsed:?} -> {expanded:?}"
+        );
+    }
+
+    #[test]
+    fn message_drag_selection_requires_ctrl_and_can_start_on_the_body() {
+        let (mut app, ctx, chat) = sweep_chat(8);
+        let from = beside(&ctx, &chat, "m003", false);
+        let to = beside(&ctx, &chat, "m005", false);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(from), primary(from, true)],
+        );
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        frame_with(&mut app, &ctx, vec![primary(to, false)]);
+        render(&mut app, &ctx);
+        assert!(app.selection.is_none());
+        ctrl_frame(&mut app, &ctx, Vec::new());
+        let from = drawn_rect(&ctx, &chat, "m003", "body").center();
+        let to = drawn_rect(&ctx, &chat, "m005", "body").center();
+        ctrl_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(from), primary(from, true)],
+        );
+        ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        ctrl_frame(&mut app, &ctx, vec![primary(to, false)]);
+        render(&mut app, &ctx);
+        assert_eq!(selected_ids(&app), ["m003", "m004", "m005"]);
+        assert!(!text_selected(&ctx));
+    }
+
+    #[test]
+    fn mouse3_scrolls_only_while_held_without_selecting() {
+        let (mut app, ctx, chat) = sweep_chat(100);
+        let start = drawn_rect(&ctx, &chat, "m099", "body").center();
+        let middle = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let before = scroll_metrics(&ctx, &chat).0;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start), middle(start, true)],
+        );
+        let moved = start - egui::vec2(0.0, 100.0);
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(moved)]);
+        render(&mut app, &ctx);
+        assert!(scroll_metrics(&ctx, &chat).0 < before);
+        frame_with(&mut app, &ctx, vec![middle(moved, false)]);
+        render(&mut app, &ctx);
+        assert!(app.selection.is_none());
+        assert!(app.sweep.is_none());
+        assert!(!text_selected(&ctx));
+        let stopped = scroll_metrics(&ctx, &chat).0;
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(moved - egui::vec2(0.0, 60.0))],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(scroll_metrics(&ctx, &chat).0, stopped);
+    }
+
     /// #246: while selecting, a drag over messages sweeps them into the
     /// selection, text included, and dragging back leaves rows out again.
     #[test]
@@ -5792,13 +5922,14 @@ mod tests {
         render(&mut app, &ctx);
         let body = |id: &str| drawn_rect(&ctx, &chat, id, "body").center();
         let (from, via, to) = (body("m003"), body("m004"), body("m005"));
-        frame_with(
+        ctrl_frame(&mut app, &ctx, Vec::new());
+        ctrl_frame(
             &mut app,
             &ctx,
             vec![egui::Event::PointerMoved(from), primary(from, true)],
         );
         for pos in [via, to, to] {
-            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+            ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
         }
         assert_eq!(
             selected_ids(&app),
@@ -5808,16 +5939,16 @@ mod tests {
         assert!(!text_selected(&ctx), "the drag swept messages, not text");
         // Back over the row it began on: the rows passed again drop out.
         for _ in 0..2 {
-            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(from)]);
+            ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(from)]);
         }
         assert_eq!(selected_ids(&app), ["m001", "m003"]);
-        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(via)]);
-        frame_with(&mut app, &ctx, vec![primary(via, false)]);
+        ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(via)]);
+        ctrl_frame(&mut app, &ctx, vec![primary(via, false)]);
         render(&mut app, &ctx);
         assert_eq!(selected_ids(&app), ["m001", "m003", "m004"]);
         assert!(app.sweep.is_none(), "releasing ends the sweep");
         // Moving without the button does not sweep further.
-        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
         render(&mut app, &ctx);
         assert_eq!(selected_ids(&app), ["m001", "m003", "m004"]);
         // A click still toggles, and Shift-click still takes a range.
@@ -5852,6 +5983,34 @@ mod tests {
         assert_eq!(selected_ids(&app), ["m001", "m003", "m004", "m005", "m006"]);
     }
 
+    #[test]
+    fn mouse3_drag_beside_a_bubble_preserves_existing_message_selection() {
+        let (mut app, ctx, chat) = sweep_chat(20);
+        app.actions
+            .push(crate::model::Action::SelectMessage("m018".into()));
+        render(&mut app, &ctx);
+        let selected = selected_ids(&app);
+        let start = beside(&ctx, &chat, "m018", true);
+        let middle = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start), middle(start, true)],
+        );
+        let moved = start - egui::vec2(0.0, 60.0);
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(moved)]);
+        frame_with(&mut app, &ctx, vec![middle(moved, false)]);
+        render(&mut app, &ctx);
+        assert_eq!(selected_ids(&app), selected);
+        assert!(app.sweep.is_none());
+        assert!(!text_selected(&ctx));
+    }
+
     /// #246: outside selection mode, a drag that starts beside the bubbles,
     /// off the text, starts selecting and sweeps the messages it passes. A
     /// drag over the text still selects the text.
@@ -5879,15 +6038,16 @@ mod tests {
         let from = beside(&ctx, &chat, "m003", false);
         let to = beside(&ctx, &chat, "m005", false);
         let via = beside(&ctx, &chat, "m004", true);
-        frame_with(
+        ctrl_frame(&mut app, &ctx, Vec::new());
+        ctrl_frame(
             &mut app,
             &ctx,
             vec![egui::Event::PointerMoved(from), primary(from, true)],
         );
         for pos in [via, to, to] {
-            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+            ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
         }
-        frame_with(&mut app, &ctx, vec![primary(to, false)]);
+        ctrl_frame(&mut app, &ctx, vec![primary(to, false)]);
         render(&mut app, &ctx);
         assert_eq!(selected_ids(&app), ["m003", "m004", "m005"]);
         assert!(app.sweep.is_none());
@@ -5932,15 +6092,16 @@ mod tests {
             .count();
         let from = beside(&ctx, &chat, "m398", true);
         let hold = egui::pos2(from.x, view.top() + 4.0);
-        frame_with(
+        ctrl_frame(&mut app, &ctx, Vec::new());
+        ctrl_frame(
             &mut app,
             &ctx,
             vec![egui::Event::PointerMoved(from), primary(from, true)],
         );
         for _ in 0..120 {
-            frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(hold)]);
+            ctrl_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(hold)]);
         }
-        frame_with(&mut app, &ctx, vec![primary(hold, false)]);
+        ctrl_frame(&mut app, &ctx, vec![primary(hold, false)]);
         render(&mut app, &ctx);
         let ids = selected_ids(&app);
         assert_eq!(ids.last().map(String::as_str), Some("m398"), "{ids:?}");
@@ -7144,7 +7305,7 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(crate::model::Content::Revoked)
+                        Some(crate::model::Content::Revoked { .. })
                     ),
                     "{page}: a revoked message stays as a tombstone"
                 );
@@ -7197,7 +7358,7 @@ mod tests {
                 assert!(
                     matches!(
                         row.map(|message| &message.content),
-                        Some(crate::model::Content::Revoked)
+                        Some(crate::model::Content::Revoked { .. })
                     ),
                     "{page}: the message is revoked in its own chat"
                 );
@@ -8377,7 +8538,7 @@ mod tests {
         let chat = sample_ids()[0].to_owned();
         app.conversations.get_mut(&chat).unwrap().messages = vec![
             message(&chat, "text", false, 100, Content::text("Double-click me")),
-            message(&chat, "gone", false, 200, Content::Revoked),
+            message(&chat, "gone", false, 200, Content::revoked()),
         ];
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -9394,6 +9555,97 @@ mod tests {
     }
 
     #[test]
+    fn filter_scrollbar_hover_and_wheel_stay_inside_the_chip_strip() {
+        let mut app = app();
+        app.open_chat = None;
+        app.settings.sidebar_width = 280.0;
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let run = |app: &mut App, time, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+        };
+        for i in 0..3 {
+            run(&mut app, i as f64 / 60.0, vec![]);
+        }
+        let area_id = egui::Id::new("filter_chips_area");
+        let timer_id = egui::Id::new("filter_chips_hover_time");
+        let strip = ctx.data(|d| d.get_temp::<egui::Rect>(area_id)).unwrap();
+        assert!(strip.height() <= 36.0);
+        let chip_id = crate::ui::chats::filter_chip_id(crate::model::ChatFilter::All);
+        let chip = || ctx.data(|d| d.get_temp::<egui::Rect>(chip_id)).unwrap();
+        let initial_x = chip().left();
+        let below = strip.center() + egui::vec2(0.0, 120.0);
+        run(&mut app, 1.0, vec![egui::Event::PointerMoved(below)]);
+        run(&mut app, 2.0, vec![]);
+        assert!(ctx.data(|d| d.get_temp::<f64>(timer_id)).is_none());
+        run(
+            &mut app,
+            3.0,
+            vec![egui::Event::PointerMoved(strip.center())],
+        );
+        let start = ctx.data(|d| d.get_temp::<f64>(timer_id)).unwrap();
+        assert_eq!(start, 3.0);
+        run(&mut app, 3.2, vec![]);
+        assert_eq!(ctx.data(|d| d.get_temp::<f64>(timer_id)), Some(start));
+        run(&mut app, 3.5, vec![]);
+        let wheel = |y| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, y),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        };
+        for i in 0..15 {
+            run(
+                &mut app,
+                3.6 + i as f64 / 60.0,
+                if i == 0 { vec![wheel(-80.0)] } else { vec![] },
+            );
+        }
+        assert!(
+            chip().left() < initial_x - 10.0,
+            "vertical wheel moves filters right"
+        );
+        let right_x = chip().left();
+        for i in 0..15 {
+            run(
+                &mut app,
+                4.0 + i as f64 / 60.0,
+                if i == 0 { vec![wheel(40.0)] } else { vec![] },
+            );
+        }
+        assert!(chip().left() > right_x + 5.0, "wheel reverses horizontally");
+        run(&mut app, 4.5, vec![egui::Event::PointerMoved(below)]);
+        assert!(ctx.data(|d| d.get_temp::<f64>(timer_id)).is_none());
+        let outside_x = chip().left();
+        for i in 0..15 {
+            run(
+                &mut app,
+                4.6 + i as f64 / 60.0,
+                if i == 0 { vec![wheel(-80.0)] } else { vec![] },
+            );
+        }
+        assert!(
+            (chip().left() - outside_x).abs() < 0.1,
+            "wheel over chats must not move filters"
+        );
+    }
+
+    #[test]
     fn filters_stay_on_one_line_and_locked_is_only_shown_when_needed() {
         let mut app = app();
         for chat in &mut app.chats {
@@ -9751,7 +10003,7 @@ mod tests {
     /// The text starts right after the plus and emoji pair, as close to the
     /// emoji as the emoji is to the plus, not a field's width away.
     #[test]
-    fn the_composers_text_follows_the_emoji_button_closely() {
+    fn the_composers_text_follows_the_sticker_button_closely() {
         use crate::ui::focus::Stop;
         for draft in ["", "A synthetic draft"] {
             let mut app = app();
@@ -9761,20 +10013,20 @@ mod tests {
             for _ in 0..4 {
                 frame_sized(&mut app, &ctx, 780.0, Vec::new());
             }
-            let emoji = crate::ui::focus::stops(&ctx)
+            let sticker = crate::ui::focus::stops(&ctx)
                 .into_iter()
-                .find(|(found, _)| *found == Stop::Emoji)
+                .find(|(found, _)| *found == Stop::Stickers)
                 .and_then(|(_, id)| ctx.read_response(id))
-                .expect("the emoji button is drawn")
+                .expect("the sticker button is drawn")
                 .rect;
             let text = ctx
                 .read_response(egui::Id::new("composer-text"))
                 .expect("the field is drawn")
                 .rect;
-            let gap = text.left() - emoji.right();
+            let gap = text.left() - sticker.right();
             assert!(
                 (gap - crate::ui::conversation::COMPOSER_TEXT_GAP).abs() < 0.5,
-                "{draft:?}: the text starts {gap} after the emoji button"
+                "{draft:?}: the text starts {gap} after the sticker button"
             );
         }
     }
@@ -10212,6 +10464,7 @@ mod tests {
                 Stop::Send,
                 Stop::Attach,
                 Stop::Emoji,
+                Stop::Stickers,
                 Stop::ChatSearch,
                 Stop::Profile,
                 Stop::Sidebar,
@@ -10332,6 +10585,7 @@ mod tests {
                         Stop::Send,
                         Stop::Attach,
                         Stop::Emoji,
+                        Stop::Stickers,
                         Stop::ChatSearch,
                         Stop::Sidebar
                     ]

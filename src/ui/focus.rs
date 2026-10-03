@@ -9,6 +9,7 @@ pub enum Stop {
     Send,
     Attach,
     Emoji,
+    Stickers,
     /// The chat header's Search, then the search pane's controls in reading
     /// order. The arrows walk its results from the field.
     ChatSearch,

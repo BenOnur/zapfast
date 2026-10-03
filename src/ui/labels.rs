@@ -99,6 +99,12 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         return;
     }
     ui.add_space(2.0);
+    let prev_floating = ui.spacing().scroll.floating;
+    let prev_margin = ui.spacing().scroll.bar_inner_margin;
+    let prev_width = ui.spacing().scroll.bar_width;
+    ui.spacing_mut().scroll.floating = false;
+    ui.spacing_mut().scroll.bar_inner_margin = 4.0;
+    ui.spacing_mut().scroll.bar_width = 4.0;
     let row = egui::ScrollArea::horizontal()
         .id_salt("label-chips")
         // A floating bar would cover the chips; the edge fade shows the row scrolls.
@@ -116,6 +122,9 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if hidden > 0.5 {
         widgets::fade_right(ui, row.inner_rect, super::chats::CHIP_FADE, palette.panel);
     }
+    ui.spacing_mut().scroll.floating = prev_floating;
+    ui.spacing_mut().scroll.bar_inner_margin = prev_margin;
+    ui.spacing_mut().scroll.bar_width = prev_width;
     ui.ctx()
         .data_mut(|data| data.insert_temp(chip_row_id(), row.inner_rect));
 }

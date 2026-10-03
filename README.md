@@ -1,5 +1,9 @@
 # ZapFast
 
+This personal fork keeps Onur's interface and automatic-reply customizations
+while following upstream releases. Its in-app updater checks
+`BenOnur/zapfast`, so an upstream binary cannot replace the customized build.
+
 **WhatsApp, native and fast.** ZapFast is a WhatsApp client written in Rust
 with [egui](https://github.com/emilk/egui). It uses
 [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) for the WhatsApp Web
@@ -75,7 +79,18 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Pinned chats stay in pin order (most recently pinned first), regardless of
   new messages. Like on the phone, you can pin up to three chats. Chat and contact name searches ignore accents, so `Angel`
   finds `Ángel`.
+  **Automatic replies** in Settings lets you add multiple exact `/command`
+  and response pairs for the current account. Existing rules migrate to the
+  first account; newly added accounts start with automatic replies disabled.
+  Pending replies stay with the originating account when switching numbers. Enable the switch and select friends or groups in that
+  section, or from each chat's right-click menu. Rules and selection save immediately. Only live incoming text messages trigger a reply while ZapFast is running
+  and connected; history, duplicates, edits, and your own messages do not.
+  Replies wait one second, then use the normal send path without changing
+  your draft. Pending replies are cancelled if the connection, permission,
+  selected chat, or matching rule changes before sending.
   The filters stay on one row and scroll horizontally in narrow sidebars.
+  Hover over that row for 0.4 seconds to reveal its scrollbar; the mouse wheel
+  scrolls the filters sideways while the pointer is over them.
   Unnamed groups use a shared participant summary for their title and subtitle.
   It names each saved contact by its whole first name as saved on the phone (the
   first word of the name when none is known), repeated names appear as `Andrea ×3`, and your
@@ -102,6 +117,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Conversations.** See replies, reactions, edits, deleted messages, read
   receipts, sender names, and group pictures. Older messages load as you
   scroll up, first from the local archive and then from your phone.
+  Hold the middle mouse button over the transcript to scroll vertically;
+  move up or down to control the speed, and release it to stop. Mouse3 does
+  not select text or messages. Deleted-message labels carry their time on
+  the same line; click the bubble to reveal or hide the retained content.
   Group messages show two gray checks after every recipient has received
   them, and blue checks after every recipient has read them. The recipient
   list and individual receipts are saved locally; later membership changes
@@ -113,9 +132,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   clock format or the time locale (`LC_TIME`) on Linux. **Select** in a
   message's menu, or Ctrl-click (Command-click on macOS) on a message, starts
   a selection: click more messages to add or remove them, Shift-click to add
-  everything up to the one you click, or drag across messages to add every
+  everything up to the one you click, or hold Ctrl (Command on macOS) while dragging across messages to add every
   one you pass (the list scrolls when you hold the pointer at its top or
-  bottom edge). A drag that starts beside the bubbles, off the text, starts a
+  bottom edge). Ctrl-drag beside the bubbles starts a message
   selection too; a drag over the text outside a selection still selects the
   text to copy. Then **Forward…** sends them together,
   in their original order, or Escape cancels. A batch goes out one message at
@@ -812,6 +831,9 @@ deleted. For example:
 ```json
 {"base":"dark","colors":{"accent":"#89b4fa","bubble_out":"#293954"}}
 ```
+
+Selecting `System24.json` also uses DM Mono, square corners, and outlined
+message bubbles. Other themes retain the normal fonts and rounded bubbles.
 
 Unspecified colors inherit the light or dark base. Spotifast palettes also work:
 chat backgrounds, bubbles, and links derive from their interface colors when not

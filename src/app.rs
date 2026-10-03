@@ -26,6 +26,14 @@ use crate::theme::{self, Palette};
 pub const PAGE: usize = 60;
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
+const AUTO_REPLY_DELAY: Duration = Duration::from_secs(1);
+
+pub(crate) struct PendingAutoReply {
+    due: Instant,
+    chat: ChatId,
+    command: String,
+    reply: String,
+}
 /// WhatsApp message-edit window.
 pub const EDIT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// WhatsApp revoke-for-everyone window.
@@ -313,7 +321,7 @@ fn add_range(messages: &[Message], ids: &mut Vec<String>, anchor: &str, to: &str
     for message in &messages[from..=to] {
         if !matches!(
             message.content,
-            Content::Revoked | Content::PhoneOnly { .. } | Content::Unsupported { .. }
+            Content::Revoked { .. } | Content::PhoneOnly { .. } | Content::Unsupported { .. }
         ) && !ids.contains(&message.id)
         {
             ids.push(message.id.clone());
@@ -339,6 +347,7 @@ pub struct App {
     /// Resolved interface language, from the setting or the system locale.
     pub locale: Locale,
     settings_dirty: bool,
+    pub settings_save_failed: bool,
     last_settings_save: Instant,
     pub roster: AccountRoster,
     pub accounts: Vec<Account>,
@@ -968,6 +977,7 @@ impl App {
             settings,
             locale,
             settings_dirty: false,
+            settings_save_failed: false,
             last_settings_save: Instant::now(),
             roster,
             accounts,
@@ -1496,7 +1506,105 @@ impl App {
         self.notifications.clear(&account, chat);
     }
 
-    /// Sends a desktop notification for an unseen incoming message.
+    /// Only the live-incoming event enters here; archive pages, history,
+    /// edits, and our outgoing deliveries never trigger an automatic reply.
+    fn maybe_auto_reply(&mut self, chat_id: &str, message: &Message) {
+        if !self.account().settings.auto_reply_enabled
+            || !self.is_connected()
+            || self.syncing
+            || self.app_lock.is_locked()
+            || message.from_me
+            || message.edited
+            || message.chat != chat_id
+            || !self
+                .account()
+                .settings
+                .auto_reply_chats
+                .iter()
+                .any(|id| id == chat_id)
+            || self
+                .chat(chat_id)
+                .is_none_or(|chat| !chat.can_send() || chat.is_channel())
+        {
+            return;
+        }
+        let Content::Text { text, .. } = &message.content else {
+            return;
+        };
+        let Some(rule) = self
+            .account()
+            .settings
+            .auto_reply_rules
+            .iter()
+            .find(|rule| {
+                rule.command.trim().starts_with('/')
+                    && rule.command.trim() == text.trim()
+                    && !rule.reply.trim().is_empty()
+            })
+        else {
+            return;
+        };
+        let key = (chat_id.to_owned(), message.id.clone());
+        if self.auto_reply_recent.contains(&key) {
+            return;
+        }
+        let reply = rule.reply.clone();
+        let command = rule.command.clone();
+        self.auto_reply_recent.push_back(key);
+        if self.auto_reply_recent.len() > 256 {
+            self.auto_reply_recent.pop_front();
+        }
+        self.auto_reply_pending.push_back(PendingAutoReply {
+            due: Instant::now() + AUTO_REPLY_DELAY,
+            chat: chat_id.to_owned(),
+            command,
+            reply,
+        });
+    }
+
+    fn flush_auto_replies(&mut self, ctx: &egui::Context, now: Instant) {
+        if !self.account().settings.auto_reply_enabled
+            || !self.is_connected()
+            || self.syncing
+            || self.app_lock.is_locked()
+        {
+            self.auto_reply_pending.clear();
+            return;
+        }
+        let pending = std::mem::take(&mut self.auto_reply_pending);
+        for reply in pending {
+            if !self
+                .account()
+                .settings
+                .auto_reply_chats
+                .contains(&reply.chat)
+                || self
+                    .chat(&reply.chat)
+                    .is_none_or(|chat| !chat.can_send() || chat.is_channel())
+                || !self
+                    .account()
+                    .settings
+                    .auto_reply_rules
+                    .iter()
+                    .any(|rule| rule.command == reply.command && rule.reply == reply.reply)
+            {
+                continue;
+            }
+            if now < reply.due {
+                ctx.request_repaint_after(reply.due.duration_since(now));
+                self.auto_reply_pending.push_back(reply);
+                continue;
+            }
+            // Same real network send as the composer, without touching its draft.
+            self.backend.send(Command::SendText {
+                chat: reply.chat,
+                text: reply.reply,
+                quoting: None,
+                mentions: Vec::new(),
+            });
+        }
+    }
+
     fn maybe_notify(&mut self, chat_id: &str, message: &Message) {
         if !self.account().settings.notifications {
             return;
@@ -2335,7 +2443,7 @@ impl App {
     /// Whether an outgoing message can still be revoked for everyone.
     pub fn can_revoke(&self, message: &Message) -> bool {
         message.from_me
-            && !matches!(message.content, Content::Revoked)
+            && !matches!(message.content, Content::Revoked { .. })
             && crate::util::now() - message.timestamp <= REVOKE_WINDOW.as_secs() as i64
     }
 
@@ -2530,6 +2638,7 @@ impl App {
                         .collect();
                 }
             }
+            Event::AutoReplyIncoming { chat, message } => self.maybe_auto_reply(&chat, &message),
             Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
             Event::Picked { chat, paths } => {
                 if live && self.open_chat.as_deref() == Some(chat.as_str()) {
@@ -3827,6 +3936,12 @@ impl App {
 
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+        let visible_account = self.active;
+        for index in 0..self.accounts.len() {
+            self.active = index;
+            self.flush_auto_replies(ctx, now);
+        }
+        self.active = visible_account;
         if self.composing
             && let Some(last) = self.last_keystroke
             && now.duration_since(last) > COMPOSING_TIMEOUT
@@ -3851,12 +3966,28 @@ impl App {
             self.backend.send(Command::CheckForUpdates);
         }
         self.maybe_download_update();
-        if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
-            self.save_settings();
+        if self.settings_dirty {
+            if self.last_settings_save.elapsed() > Duration::from_secs(2) {
+                self.save_settings();
+            }
+            if self.settings_dirty {
+                ctx.request_repaint_after(
+                    Duration::from_secs(2).saturating_sub(self.last_settings_save.elapsed()),
+                );
+            }
         }
         for account in &mut self.accounts {
             if account.settings_dirty {
-                account.save_settings();
+                if !account.settings_save_failed
+                    || account.last_settings_save.elapsed() >= Duration::from_secs(2)
+                {
+                    account.save_settings();
+                }
+                if account.settings_dirty {
+                    ctx.request_repaint_after(
+                        Duration::from_secs(2).saturating_sub(account.last_settings_save.elapsed()),
+                    );
+                }
             }
         }
         if !self.typing.is_empty() || self.composing {
@@ -3910,10 +4041,17 @@ impl App {
     }
 
     fn save_settings(&mut self) {
-        self.settings_dirty = false;
         self.last_settings_save = Instant::now();
-        if let Err(error) = self.settings.save(&self.dirs.settings_file()) {
-            log::warn!("could not save settings: {error}");
+        match self.settings.save(&self.dirs.settings_file()) {
+            Ok(()) => {
+                self.settings_dirty = false;
+                self.settings_save_failed = false;
+            }
+            Err(error) => {
+                self.settings_dirty = true;
+                self.settings_save_failed = true;
+                log::warn!("could not save settings: {error}");
+            }
         }
     }
 
@@ -4530,7 +4668,10 @@ impl App {
                     .get_mut(&chat)
                     .and_then(|conversation| conversation.message_mut(&id))
                 {
-                    message.content = Content::Revoked;
+                    let prev = message.content.clone();
+                    message.content = Content::Revoked {
+                        deleted_content: Some(Box::new(prev)),
+                    };
                 }
                 self.backend.send(Command::Revoke { chat, id });
             }
@@ -5413,6 +5554,31 @@ impl App {
                 self.mark_settings_dirty();
             }
             Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SetAutoReplyEnabled(enabled) => {
+                self.account_mut().settings.auto_reply_enabled = enabled;
+                self.account_mut().mark_settings_dirty();
+                self.account_mut().save_settings();
+            }
+            Action::SetAutoReplyRules(rules) => {
+                self.account_mut().settings.auto_reply_rules = rules;
+                self.account_mut().mark_settings_dirty();
+                self.account_mut().save_settings();
+            }
+            Action::SetAutoReplyChat(chat, enabled) => {
+                self.account_mut()
+                    .settings
+                    .auto_reply_chats
+                    .retain(|id| id != &chat);
+                if enabled
+                    && self
+                        .chat(&chat)
+                        .is_some_and(|chat| chat.can_send() && !chat.is_channel())
+                {
+                    self.account_mut().settings.auto_reply_chats.push(chat);
+                }
+                self.account_mut().mark_settings_dirty();
+                self.account_mut().save_settings();
+            }
             Action::SetAccountPrivacy { kind, choice } => {
                 // The value lives on the phone: nothing is written without a
                 // connection and a snapshot to write against.
@@ -8434,7 +8600,7 @@ mod tests {
         // Shift-click selects everything between the last click and this one,
         // skipping what cannot be forwarded.
         let mut deleted = message(chat, "gone", 4);
-        deleted.content = Content::Revoked;
+        deleted.content = Content::revoked();
         app.conversations
             .get_mut(chat)
             .unwrap()
@@ -8462,7 +8628,7 @@ mod tests {
         app.chats = vec![Chat::new(chat.into(), "Ada".into())];
         app.open_chat = Some(chat.into());
         let mut gone = message(chat, "gone", 3);
-        gone.content = Content::Revoked;
+        gone.content = Content::revoked();
         app.conversations.entry(chat.into()).or_default().merge(
             vec![
                 message(chat, "first", 1),
@@ -9240,6 +9406,299 @@ mod tests {
         assert!(
             !app.wants_quiet(),
             "a download that takes too long does not keep music paused"
+        );
+    }
+
+    #[test]
+    fn auto_reply_matches_multiple_commands_only_in_enabled_live_chats() {
+        let mut app = app();
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        let peer = "fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(peer.into(), "Fixture".into()));
+        app.account_mut().settings.auto_reply_rules = vec![
+            crate::settings::AutoReplyRule {
+                command: "/hello".into(),
+                reply: "Hello 👋".into(),
+            },
+            crate::settings::AutoReplyRule {
+                command: "/bye".into(),
+                reply: "Goodbye".into(),
+            },
+        ];
+        app.settings.notifications = false;
+        app.account_mut().settings.auto_reply_chats = vec![peer.into()];
+        let mut msg = message(peer, "live-1", crate::util::now());
+        msg.content = Content::text("/hello");
+        app.maybe_auto_reply(peer, &msg);
+        assert!(commands.try_recv().is_err(), "disabled by default");
+        app.account_mut().settings.auto_reply_enabled = true;
+        app.account_mut().settings.auto_reply_chats.clear();
+        app.maybe_auto_reply(peer, &msg);
+        assert!(commands.try_recv().is_err(), "unselected chats stay quiet");
+        app.account_mut()
+            .settings
+            .auto_reply_chats
+            .push(peer.into());
+        app.composer = "An unfinished draft".into();
+        app.reply_to = Some("quoted-fixture".into());
+        events
+            .send(Event::Messages {
+                chat: peer.into(),
+                messages: vec![msg.clone()],
+                older: true,
+                complete: true,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(
+            commands.try_recv().is_err(),
+            "archive/history does not reply"
+        );
+        events
+            .send(Event::AutoReplyIncoming {
+                chat: peer.into(),
+                message: Box::new(msg.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(
+            commands.try_recv().is_err(),
+            "automatic replies wait one second"
+        );
+        let due = app.auto_reply_pending.front().unwrap().due;
+        let ctx = egui::Context::default();
+        app.flush_auto_replies(&ctx, due - Duration::from_millis(1));
+        assert!(commands.try_recv().is_err(), "no early send");
+        app.flush_auto_replies(&ctx, due);
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::SendText { chat, text, quoting: None, mentions } if chat == peer && text == "Hello 👋" && mentions.is_empty())
+        );
+        app.maybe_auto_reply(peer, &msg);
+        assert!(
+            commands.try_recv().is_err(),
+            "duplicate incoming does not reply twice"
+        );
+        msg.id = "live-2".into();
+        msg.content = Content::text(" /bye ");
+        app.maybe_auto_reply(peer, &msg);
+        let due = app.auto_reply_pending.front().unwrap().due;
+        app.flush_auto_replies(&ctx, due);
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::SendText { text, .. } if text == "Goodbye")
+        );
+        assert_eq!(app.composer, "An unfinished draft");
+        assert_eq!(app.reply_to.as_deref(), Some("quoted-fixture"));
+        for text in ["Someone said /hello", "/HELLO", "/unknown"] {
+            msg.id = text.into();
+            msg.content = Content::text(text);
+            app.maybe_auto_reply(peer, &msg);
+        }
+        msg.id = "ignored-incoming".into();
+        msg.content = Content::text("/hello");
+        msg.from_me = true;
+        app.maybe_auto_reply(peer, &msg);
+        msg.from_me = false;
+        msg.edited = true;
+        app.maybe_auto_reply(peer, &msg);
+        msg.edited = false;
+        app.syncing = true;
+        app.maybe_auto_reply(peer, &msg);
+        app.syncing = false;
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == peer)
+            .unwrap()
+            .locked = true;
+        app.maybe_auto_reply(peer, &msg);
+        assert!(
+            commands.try_recv().is_err(),
+            "non-command, own, edited, syncing and locked messages stay quiet"
+        );
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == peer)
+            .unwrap()
+            .locked = false;
+        app.link = LinkStatus::Connecting;
+        app.maybe_auto_reply(peer, &msg);
+        assert!(
+            commands.try_recv().is_err(),
+            "offline does not queue auto replies"
+        );
+        app.link = LinkStatus::Connected;
+        app.app_lock.lock();
+        app.maybe_auto_reply(peer, &msg);
+        assert!(
+            commands.try_recv().is_err(),
+            "app lock suppresses automatic sends"
+        );
+    }
+
+    #[test]
+    fn pending_auto_replies_cancel_when_permission_or_rule_changes() {
+        for change in 0..6 {
+            let mut app = app();
+            let (backend, mut commands, _) = Backend::recording_with_events();
+            app.backend = backend;
+            app.link = LinkStatus::Connected;
+            let peer = "fixture@s.whatsapp.net";
+            app.chats.push(Chat::new(peer.into(), "Fixture".into()));
+            app.account_mut().settings.auto_reply_enabled = true;
+            app.account_mut().settings.auto_reply_chats = vec![peer.into()];
+            app.account_mut().settings.auto_reply_rules = vec![crate::settings::AutoReplyRule {
+                command: "/hello".into(),
+                reply: "Hello".into(),
+            }];
+            let mut msg = message(peer, "cancelled-live", 1);
+            msg.content = Content::text("/hello");
+            app.maybe_auto_reply(peer, &msg);
+            let due = app.auto_reply_pending.front().unwrap().due;
+            match change {
+                0 => app.account_mut().settings.auto_reply_enabled = false,
+                1 => app.account_mut().settings.auto_reply_chats.clear(),
+                2 => app.account_mut().settings.auto_reply_rules[0].reply = "Changed".into(),
+                3 => app.link = LinkStatus::Connecting,
+                4 => app.app_lock.lock(),
+                _ => app.chats[0].locked = true,
+            }
+            let ctx = egui::Context::default();
+            app.flush_auto_replies(&ctx, due - Duration::from_millis(500));
+            assert!(app.auto_reply_pending.is_empty());
+            app.account_mut().settings.auto_reply_enabled = true;
+            app.account_mut().settings.auto_reply_chats = vec![peer.into()];
+            app.account_mut().settings.auto_reply_rules[0].reply = "Hello".into();
+            app.link = LinkStatus::Connected;
+            app.app_lock.unlocked(true);
+            app.chats[0].locked = false;
+            app.flush_auto_replies(&ctx, due);
+            assert!(
+                commands.try_recv().is_err(),
+                "cancelled replies never revive"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_replies_stay_with_their_account_when_switching() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut second_commands) = two_accounts(directory.path());
+        let (backend, mut first_commands, first_events) = Backend::recording_with_events();
+        app.accounts[0].backend = backend;
+        app.accounts[0].link = LinkStatus::Connected;
+        app.settings.check_for_updates = false;
+        let peer = "fixture@s.whatsapp.net";
+        for account in &mut app.accounts {
+            account.chats.push(Chat::new(peer.into(), "Fixture".into()));
+            account.settings.auto_reply_enabled = true;
+            account.settings.auto_reply_chats = vec![peer.into()];
+            account.settings.auto_reply_rules = vec![crate::settings::AutoReplyRule {
+                command: "/hello".into(),
+                reply: account.id.as_str().to_owned(),
+            }];
+        }
+        let mut msg = message(peer, "same-message-id", 1);
+        msg.content = Content::text("/hello");
+        app.maybe_auto_reply(peer, &msg);
+        app.switch_account(&AccountId::parse("2").unwrap());
+        app.maybe_auto_reply(peer, &msg);
+        for commands in [&mut first_commands, &mut second_commands] {
+            while let Ok(command) = commands.try_recv() {
+                assert!(
+                    !matches!(command, Command::SendText { .. }),
+                    "no reply before its delay"
+                );
+            }
+        }
+        first_events
+            .send(Event::AutoReplyIncoming {
+                chat: peer.into(),
+                message: Box::new(msg.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        assert_eq!(app.active, 1);
+        for account in &mut app.accounts {
+            assert_eq!(
+                account.auto_reply_pending.len(),
+                1,
+                "deduplication is per account"
+            );
+            for pending in &mut account.auto_reply_pending {
+                pending.due = Instant::now();
+            }
+        }
+        app.tick(&egui::Context::default());
+        assert_eq!(
+            app.active, 1,
+            "background replies preserve the visible account"
+        );
+        assert!(
+            matches!(first_commands.try_recv().unwrap(), Command::SendText { text, .. } if text == "1")
+        );
+        assert!(
+            matches!(second_commands.try_recv().unwrap(), Command::SendText { text, .. } if text == "2")
+        );
+        assert!(first_commands.try_recv().is_err());
+        assert!(second_commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn auto_reply_group_selection_and_edits_are_saved_before_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(dir.path()), Settings::default()).0;
+        let (backend, mut commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.link = LinkStatus::Connected;
+        app.settings.notifications = false;
+        let group = "synthetic-group@g.us";
+        let mut chat = Chat::new(group.into(), "Synthetic group".into());
+        chat.kind = ChatKind::Group;
+        app.chats.push(chat);
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::SetAutoReplyRules(vec![crate::settings::AutoReplyRule {
+                command: "/commands".into(),
+                reply: "Command list".into(),
+            }]),
+            &ctx,
+        );
+        app.apply(Action::SetAutoReplyChat(group.into(), true), &ctx);
+        app.apply(Action::SetAutoReplyEnabled(true), &ctx);
+        // Read immediately, without tick, save_state, or a graceful exit.
+        let restored = crate::settings::AccountSettings::load(&app.account().dirs.settings_file());
+        assert!(restored.auto_reply_enabled);
+        assert_eq!(restored.auto_reply_chats, vec![group]);
+        assert_eq!(restored.auto_reply_rules[0].command, "/commands");
+        let mut msg = message(group, "group-live", crate::util::now());
+        msg.content = Content::text("/commands");
+        events
+            .send(Event::AutoReplyIncoming {
+                chat: group.into(),
+                message: Box::new(msg),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(commands.try_recv().is_err());
+        let due = app.auto_reply_pending.front().unwrap().due;
+        app.flush_auto_replies(&ctx, due);
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::SendText { chat, text, .. } if chat == group && text == "Command list")
+        );
+        // A failed write stays dirty and succeeds on a subsequent retry.
+        let config = app.account().dirs.state.clone();
+        std::fs::remove_file(app.account().dirs.settings_file()).unwrap();
+        std::fs::remove_dir(&config).unwrap();
+        std::fs::write(&config, b"blocks-directory").unwrap();
+        app.apply(Action::SetAutoReplyEnabled(false), &ctx);
+        assert!(app.account().settings_dirty && app.account().settings_save_failed);
+        std::fs::remove_file(&config).unwrap();
+        app.save_state();
+        assert!(!app.account().settings_dirty && !app.account().settings_save_failed);
+        assert!(
+            !crate::settings::AccountSettings::load(&app.account().dirs.settings_file())
+                .auto_reply_enabled
         );
     }
 

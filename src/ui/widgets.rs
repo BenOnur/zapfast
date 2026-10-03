@@ -925,7 +925,13 @@ pub fn bubble_shape(
     fill: Color32,
     tail: Option<Side>,
 ) -> egui::Shape {
-    let corners = bubble_corners(tail);
+    let is_retro = palette.is_system24();
+    let tail = if is_retro { None } else { tail };
+    let corners = if is_retro {
+        CornerRadius::ZERO
+    } else {
+        bubble_corners(tail)
+    };
     let shadow = palette.bubble_shadow();
     let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
     // The tail overlaps the bubble by a few points so no seam shows where
@@ -972,6 +978,14 @@ pub fn bubble_shape(
     shapes.push(egui::Shape::rect_filled(rect, corners, fill));
     if let Some(points) = tail_points {
         shapes.push(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+    }
+    if is_retro {
+        shapes.push(egui::Shape::rect_stroke(
+            rect,
+            corners,
+            Stroke::new(1.0, palette.outline),
+            egui::StrokeKind::Inside,
+        ));
     }
     egui::Shape::Vec(shapes)
 }

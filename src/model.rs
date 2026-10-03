@@ -488,7 +488,10 @@ pub enum Content {
         state: PollState,
     },
     /// "This message was deleted."
-    Revoked,
+    Revoked {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deleted_content: Option<Box<Content>>,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -675,6 +678,12 @@ impl Content {
         }
     }
 
+    pub fn revoked() -> Self {
+        Self::Revoked {
+            deleted_content: None,
+        }
+    }
+
     /// The first line of the text the archive search looks at that contains
     /// `query`, trimmed, or `None` when no line has it.
     pub fn text_matching(&self, query: &str) -> Option<String> {
@@ -770,7 +779,7 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
-            Self::Revoked => "This message was deleted".to_owned(),
+            Self::Revoked { .. } => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {
                 live_location: true,
@@ -1665,6 +1674,9 @@ pub enum Action {
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,
+    SetAutoReplyEnabled(bool),
+    SetAutoReplyRules(Vec<crate::settings::AutoReplyRule>),
+    SetAutoReplyChat(ChatId, bool),
     /// Writes one WhatsApp account privacy category on the phone.
     SetAccountPrivacy {
         kind: crate::privacy::PrivacyKind,

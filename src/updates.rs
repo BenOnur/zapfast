@@ -27,7 +27,7 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
     // with the current key until installs trust this one too.
     additional_publisher_keys: &[include_str!("../assets/update-public-key-next.hex")],
     ..UpdateConfig::new(
-        "crmne/zapfast",
+        "BenOnur/zapfast",
         "ZapFast",
         "zapfast",
         env!("CARGO_PKG_VERSION"),
@@ -52,6 +52,7 @@ mod tests {
         CONFIG.validate().unwrap();
         assert_eq!(CONFIG.current_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(CONFIG.slug, "zapfast");
+        assert_eq!(CONFIG.repository, "BenOnur/zapfast");
     }
 
     #[test]

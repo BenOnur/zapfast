@@ -365,12 +365,59 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     }
     let palette = app.palette;
     ui.add_space(8.0);
+    let area_id = egui::Id::new("filter_chips_area");
+    // Only the chip strip (including its small scrollbar gutter) owns hover.
+    // A horizontal layout response can extend into the chat list below it.
+    let strip_rect =
+        egui::Rect::from_min_size(ui.next_widget_position(), vec2(ui.available_width(), 36.0));
+    let pointer_in_area = ui.rect_contains_pointer(strip_rect);
+
+    let timer_id = egui::Id::new("filter_chips_hover_time");
+    let now = ui.input(|i| i.time);
+    let hover_start = ui.ctx().data(|d| d.get_temp::<f64>(timer_id));
+
+    let show_bar = if pointer_in_area {
+        let start = match hover_start {
+            Some(t) => t,
+            None => {
+                ui.ctx().data_mut(|d| d.insert_temp(timer_id, now));
+                now
+            }
+        };
+        if now - start >= 0.4 {
+            true
+        } else {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+            false
+        }
+    } else {
+        ui.ctx().data_mut(|d| d.remove::<f64>(timer_id));
+        false
+    };
+
+    let prev_floating = ui.spacing().scroll.floating;
+    let prev_margin = ui.spacing().scroll.bar_inner_margin;
+    let prev_width = ui.spacing().scroll.bar_width;
+    if show_bar {
+        ui.spacing_mut().scroll.floating = false;
+        ui.spacing_mut().scroll.bar_inner_margin = 4.0;
+        ui.spacing_mut().scroll.bar_width = 4.0;
+    }
+    let prev_wheel_direction = ui.style().always_scroll_the_only_direction;
+    ui.style_mut().always_scroll_the_only_direction = true;
     let output = egui::ScrollArea::horizontal()
+        .max_height(36.0)
         .id_salt("chat-filters")
         // A floating bar would cover the chips; the edge fade shows the row scrolls.
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .animated(false)
         .auto_shrink([false, true])
+        .scroll_bar_visibility(if show_bar {
+            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+        } else {
+            egui::scroll_area::ScrollBarVisibility::AlwaysHidden
+        })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -469,6 +516,13 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
             })
         });
+    ui.style_mut().always_scroll_the_only_direction = prev_wheel_direction;
+    ui.ctx().data_mut(|d| d.insert_temp(area_id, strip_rect));
+    if show_bar {
+        ui.spacing_mut().scroll.floating = prev_floating;
+        ui.spacing_mut().scroll.bar_inner_margin = prev_margin;
+        ui.spacing_mut().scroll.bar_width = prev_width;
+    }
     // Chips cut off at the edge fade into the panel, which says the row
     // scrolls on.
     let hidden = output.content_size.x - output.state.offset.x - output.inner_rect.width();
@@ -1108,9 +1162,20 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 sender.paint(ui, pos2(x, line_y), preview_color);
                 x += width;
             }
+            let summary_text = if last.summary == "This message was deleted"
+                || last.summary == "You deleted this message"
+            {
+                if last.from_me {
+                    crate::i18n::gettext(app.locale, "You deleted this message").into_owned()
+                } else {
+                    crate::i18n::gettext(app.locale, "This message was deleted").into_owned()
+                }
+            } else {
+                app.resolve_mention_tokens(&last.summary)
+            };
             let words = widgets::line(
                 ui,
-                &crate::markup::plain(&app.resolve_mention_tokens(&last.summary), &[]),
+                &crate::markup::plain(&summary_text, &[]),
                 theme::regular(13.0),
                 preview_color,
                 (badge_right - x).max(0.0),
@@ -1123,7 +1188,18 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     pos2(left, line_y - 4.0),
                     pos2(badge_right, line_y + words.size().y.max(16.0) + 4.0),
                 );
-                full_preview = Some((area, prefix, last.full.clone()));
+                let full_text = if last.full == "This message was deleted"
+                    || last.full == "You deleted this message"
+                {
+                    if last.from_me {
+                        crate::i18n::gettext(app.locale, "You deleted this message").into_owned()
+                    } else {
+                        crate::i18n::gettext(app.locale, "This message was deleted").into_owned()
+                    }
+                } else {
+                    last.full.clone()
+                };
+                full_preview = Some((area, prefix, full_text));
             }
             words
         } else {
@@ -1503,6 +1579,21 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     ) {
         app.actions
             .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
+    }
+    if chat.can_send() && !chat.is_channel() {
+        let enabled = app.account().settings.auto_reply_chats.contains(&chat.id);
+        let label = crate::i18n::gettext(
+            app.locale,
+            if enabled {
+                "Disable automatic replies in this chat"
+            } else {
+                "Enable automatic replies in this chat"
+            },
+        );
+        if widgets::menu_item(ui, palette, Some(Icon::MessageCircle), &label) {
+            app.actions
+                .push(Action::SetAutoReplyChat(chat.id.clone(), !enabled));
+        }
     }
     // Channels cannot be favorites, as on the phone.
     if !chat.is_channel() {

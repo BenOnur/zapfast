@@ -14,6 +14,8 @@ include!(concat!(env!("OUT_DIR"), "/catalogs.rs"));
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Locale {
     #[default]
+    #[serde(rename = "tr")]
+    Turkish,
     #[serde(rename = "en")]
     English,
     #[serde(rename = "pt-BR")]
@@ -32,13 +34,12 @@ pub enum Locale {
     ChineseSimplified,
     #[serde(rename = "zh-Hant")]
     ChineseTraditional,
-    #[serde(rename = "tr")]
-    Turkish,
 }
 
 impl Locale {
     /// Every locale shown in the language picker, in a stable order.
     pub const ALL: [Locale; 10] = [
+        Self::Turkish,
         Self::English,
         Self::PortugueseBrazil,
         Self::German,
@@ -48,7 +49,6 @@ impl Locale {
         Self::Russian,
         Self::ChineseSimplified,
         Self::ChineseTraditional,
-        Self::Turkish,
     ];
 
     /// The language's own name, for the picker.
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(Locale::from_system("tr"), Some(Locale::Turkish));
         assert_eq!(Locale::from_system("en-US"), Some(Locale::English));
         assert_eq!(Locale::from_system("ja-JP"), None);
-        assert_eq!(Locale::default(), Locale::English);
+        assert_eq!(Locale::default(), Locale::Turkish);
     }
 
     /// Every preferred language is tried in order, not only the first: a

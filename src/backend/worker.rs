@@ -1012,6 +1012,7 @@ impl Worker {
                     | Event::Messages { .. }
                     | Event::MessageUpdated(_)
                     | Event::Incoming { .. }
+                    | Event::AutoReplyIncoming { .. }
                     | Event::Contacts(_)
                     | Event::SearchHits { .. }
                     | Event::Labels(_)
@@ -1382,7 +1383,7 @@ impl Worker {
             let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
                 continue;
             };
-            if matches!(existing.content, Content::Revoked) {
+            if matches!(existing.content, Content::Revoked { .. }) {
                 continue;
             }
             // Edits do not replace the raw protobuf; keep an edited interactive
@@ -2988,6 +2989,72 @@ impl Worker {
             .collect()
     }
 
+    fn log_deleted_message(
+        chat: &str,
+        sender: &str,
+        id: &str,
+        time: i64,
+        content: Option<&Content>,
+    ) {
+        if let Some(config_dir) = directories::ProjectDirs::from("me", "paolino", "zapfast")
+            .map(|p| p.config_dir().to_path_buf())
+        {
+            let _ = std::fs::create_dir_all(&config_dir);
+            let log_file = config_dir.join("deleted_messages.log");
+            let date_str = crate::util::copy_stamp(time);
+            let content_str = match content {
+                Some(Content::Text { text, .. }) => text.clone(),
+                Some(Content::Image { caption, .. }) => {
+                    let cap = caption.as_deref().unwrap_or("");
+                    format!("[Fotoğraf] {cap}")
+                }
+                Some(Content::Video { caption, .. }) => {
+                    let cap = caption.as_deref().unwrap_or("");
+                    format!("[Video] {cap}")
+                }
+                Some(Content::Audio { .. }) => "[Ses Mesajı]".to_string(),
+                Some(Content::Sticker { .. }) => "[Sticker/Çıkartma]".to_string(),
+                Some(Content::Document {
+                    file_name, caption, ..
+                }) => {
+                    let name = if file_name.is_empty() {
+                        "Belge"
+                    } else {
+                        file_name.as_str()
+                    };
+                    let cap = caption
+                        .as_deref()
+                        .map(|c| format!(" - {c}"))
+                        .unwrap_or_default();
+                    format!("[Belge] {name}{cap}")
+                }
+                Some(Content::Contact { display_name, .. }) => format!("[Kişi] {display_name}"),
+                Some(Content::Location { name, address, .. }) => {
+                    let loc = name.as_deref().or(address.as_deref()).unwrap_or("Konum");
+                    format!("[Konum] {loc}")
+                }
+                Some(Content::Poll {
+                    question, options, ..
+                }) => {
+                    let opts = options.join(", ");
+                    format!("[Anket] {question} ({opts})")
+                }
+                Some(other) => other.summary(),
+                None => "[İçerik tespit edilemedi]".to_string(),
+            };
+            let log_line = format!(
+                "{date_str} | Sohbet: {chat} | Gönderen: {sender} | ID: {id} | İçerik: {content_str}\r\n"
+            );
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file)
+            {
+                let _ = file.write_all(log_line.as_bytes());
+            }
+        }
+    }
+
     fn ingest(&mut self, message: &Arc<wa::Message>, info: &MessageInfo) {
         self.learn_source(&info.source);
         if info.source.chat.is_status_broadcast() {
@@ -3047,10 +3114,37 @@ impl Worker {
             };
             match protocol.r#type {
                 Some(Type::REVOKE) => {
-                    if let Ok(true) =
-                        self.archive
-                            .set_content(&chat, &target, &Content::Revoked, false)
-                    {
+                    let existing_msg = self.archive.message(&chat, &target).ok().flatten();
+                    let deleted_content = existing_msg
+                        .as_ref()
+                        .and_then(|m| match &m.content {
+                            Content::Revoked { deleted_content } => deleted_content.clone(),
+                            other => Some(Box::new(other.clone())),
+                        })
+                        .or_else(|| {
+                            let raw = self.archive.raw(&chat, &target).ok().flatten()?;
+                            let wa_msg = wa::Message::decode_from_slice(&raw).ok()?;
+                            classify(&wa_msg).map(Box::new)
+                        });
+
+                    let sender = existing_msg
+                        .as_ref()
+                        .map(|m| m.sender.as_str())
+                        .unwrap_or("unknown");
+                    let msg_time = existing_msg
+                        .as_ref()
+                        .map(|m| m.timestamp)
+                        .unwrap_or_else(crate::util::now);
+                    Self::log_deleted_message(
+                        &chat,
+                        sender,
+                        &target,
+                        msg_time,
+                        deleted_content.as_deref(),
+                    );
+
+                    let revoked = Content::Revoked { deleted_content };
+                    if let Ok(true) = self.archive.set_content(&chat, &target, &revoked, false) {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
                     }
@@ -3169,6 +3263,7 @@ impl Worker {
             Some(message.encode_to_vec()),
             push_name.as_deref(),
             poll_baseline,
+            !info.is_offline && info.unavailable_request_id.is_none(),
         );
         if sent_elsewhere {
             self.settle_early_receipts(&chat, &id);
@@ -3592,7 +3687,7 @@ impl Worker {
 
     /// Archives a message and emits chat and row updates.
     fn store_message(&mut self, message: Message, raw: Option<Vec<u8>>, push_name: Option<&str>) {
-        self.archive_message(message, raw, push_name, false);
+        self.archive_message(message, raw, push_name, false, false);
     }
 
     /// Stores `message`; `poll_baseline` records a live poll creation's
@@ -3604,6 +3699,7 @@ impl Worker {
         raw: Option<Vec<u8>>,
         push_name: Option<&str>,
         poll_baseline: bool,
+        auto_reply_live: bool,
     ) {
         if self.predates_removal(&message.chat, message.timestamp) {
             return;
@@ -3667,6 +3763,8 @@ impl Worker {
         self.polish(&mut stored);
         // Notify only for live incoming messages, not history replay.
         let incoming = (unread && !self.syncing).then(|| stored.clone());
+        let auto_reply =
+            (auto_reply_live && is_new && !stored.from_me && !self.syncing).then(|| stored.clone());
         self.emit(Event::Messages {
             chat: chat.clone(),
             messages: vec![stored],
@@ -3674,6 +3772,12 @@ impl Worker {
             complete: false,
         });
         self.emit_chat(&chat);
+        if let Some(message) = auto_reply {
+            self.emit(Event::AutoReplyIncoming {
+                chat: chat.clone(),
+                message: Box::new(message),
+            });
+        }
         if let Some(message) = incoming {
             self.emit(Event::Incoming {
                 chat,
@@ -4108,9 +4212,22 @@ impl Worker {
                 );
             }
             for revoked in chat.revoked {
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
+                let deleted_content =
+                    if let Ok(Some(existing)) = self.archive.message(&id, &revoked) {
+                        match existing.content {
+                            Content::Revoked { deleted_content } => deleted_content,
+                            other => Some(Box::new(other)),
+                        }
+                    } else if let Ok(Some(raw)) = self.archive.raw(&id, &revoked) {
+                        wa::Message::decode_from_slice(&raw)
+                            .ok()
+                            .and_then(|wa_msg| classify(&wa_msg))
+                            .map(Box::new)
+                    } else {
+                        None
+                    };
+                let content = Content::Revoked { deleted_content };
+                let _ = self.archive.set_content(&id, &revoked, &content, false);
             }
             if (metadata || existing.is_none())
                 && let Some(snapshot_unread) = chat.unread
@@ -5901,7 +6018,7 @@ impl Worker {
             .message(chat, id)
             .map_err(|_| unavailable)?
             .ok_or(unavailable)?;
-        if matches!(row.content, Content::Revoked) {
+        if matches!(row.content, Content::Revoked { .. }) {
             return Err(unavailable);
         }
         let raw = self
@@ -6137,7 +6254,7 @@ impl Worker {
         };
         if matches!(
             source.content,
-            Content::Revoked
+            Content::Revoked { .. }
                 | Content::Unsupported { .. }
                 | Content::PhoneOnly { .. }
                 | Content::Poll { .. }
@@ -6321,6 +6438,24 @@ impl Worker {
         }
         for mention in &mut message.mentions {
             mention.id = self.canonical_str(&mention.id);
+        }
+        if let Content::Revoked { deleted_content } = &mut message.content
+            && deleted_content.is_none()
+            && let Ok(Some(raw)) = self.archive.raw(&message.chat, &message.id)
+            && let Ok(original) = wa::Message::decode_from_slice(&raw)
+            && let Some(content) = classify(&original)
+        {
+            Self::log_deleted_message(
+                &message.chat,
+                &message.sender,
+                &message.id,
+                message.timestamp,
+                Some(&content),
+            );
+            *deleted_content = Some(Box::new(content));
+            let _ = self
+                .archive
+                .set_content(&message.chat, &message.id, &message.content, false);
         }
     }
 
@@ -6964,10 +7099,16 @@ impl Worker {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
             return;
         };
-        if let Ok(true) = self
+        let prev = self
             .archive
-            .set_content(&chat, &id, &Content::Revoked, false)
-        {
+            .message(&chat, &id)
+            .ok()
+            .flatten()
+            .map(|m| m.content);
+        let revoked = Content::Revoked {
+            deleted_content: prev.map(Box::new),
+        };
+        if let Ok(true) = self.archive.set_content(&chat, &id, &revoked, false) {
             self.emit_message(&chat, &id);
             self.emit_chat(&chat);
         }
@@ -7400,6 +7541,9 @@ async fn send_outgoing(
                 .routing_info(&jid)
                 .await
                 .map_err(|error| error.to_string())?;
+            if group.participants.is_empty() {
+                return Err("Group recipients are unavailable; message was not sent".to_owned());
+            }
             let lids = group
                 .participants
                 .iter()
@@ -12831,6 +12975,32 @@ mod receipt_tests {
     }
 
     #[test]
+    fn auto_reply_live_event_ignores_read_state_but_excludes_replay_and_duplicates() {
+        let (mut worker, events, _inbox, _wa) = worker();
+        worker.store_message(incoming("read-anchor", 300), None, None);
+        worker.archive.mark_read_to(PEER, "read-anchor").unwrap();
+        let _ = events.try_iter().collect::<Vec<_>>();
+        worker.archive_message(incoming("live-command", 100), None, None, false, true);
+        let emitted = events.try_iter().collect::<Vec<_>>();
+        assert!(emitted.iter().any(|event| matches!(event, Event::AutoReplyIncoming { message, .. } if message.id == "live-command")));
+        assert!(
+            !emitted
+                .iter()
+                .any(|event| matches!(event, Event::Incoming { .. })),
+            "read state still suppresses desktop notifications"
+        );
+        worker.archive_message(incoming("live-command", 100), None, None, false, true);
+        worker.archive_message(incoming("offline", 400), None, None, false, false);
+        worker.syncing = true;
+        worker.archive_message(incoming("history", 500), None, None, false, true);
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::AutoReplyIncoming { .. }))
+        );
+    }
+
+    #[test]
     fn replying_on_the_phone_reads_only_preceding_messages() {
         let (mut worker, events, _inbox, _wa) = worker();
         worker.store_message(incoming("old", 100), None, None);
@@ -13123,7 +13293,7 @@ mod receipt_tests {
             .unwrap();
         assert!(worker.quote(PEER, Some("original")).unwrap().is_some());
         // A deleted original is not.
-        row.content = Content::Revoked;
+        row.content = Content::revoked();
         worker
             .archive
             .insert_message(&row, Some(&original))
