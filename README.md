@@ -440,7 +440,7 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
 - **Copy text.** Select part of a message or copy across messages in
   WhatsApp's `[time, date] Name:` format. Contact names and numbers are also
   selectable, with Brazilian numbers shown as `(DDD) XXXX-XXXX` or
-  `(DDD) XXXXX-XXXX`.
+  `(DDD) XXXXX-XXXX`, and Turkish numbers as `+90 XXX XXX XXXX`.
 - **Keyboard shortcuts.** `Ctrl+K` or `Ctrl+Shift+F` searches your chats,
   where `↑`/`↓` selects a matching chat and Enter opens it ready for typing;
   `Ctrl+F` searches the open chat as in WhatsApp (`↑`/`↓` walk the results

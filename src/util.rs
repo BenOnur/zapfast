@@ -533,6 +533,11 @@ pub fn phone(digits: &str) -> String {
     if digits.is_empty() {
         return String::new();
     }
+    // Turkish numbers use a ten-digit national number grouped 3, 3, 4.
+    // Normalization above guarantees ASCII before taking byte slices.
+    if digits.starts_with("90") && digits.len() == 12 {
+        return format!("+90 {} {} {}", &digits[2..5], &digits[5..8], &digits[8..]);
+    }
     if let Some(formatted) = brazilian_phone(&digits) {
         return formatted;
     }
@@ -806,6 +811,10 @@ mod tests {
         assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
         assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");
         assert_eq!(phone("+55 (11) 99999-9999"), "+55 (11) 99999-9999");
+        assert_eq!(phone("905321234567"), "+90 532 123 4567");
+        assert_eq!(phone("+90 (532) 123-4567"), "+90 532 123 4567");
+        assert_eq!(phone("902121234567"), "+90 212 123 4567");
+        assert_eq!(phone("90532123456"), "+90 532 123 456");
         assert_eq!(phone(""), "");
     }
 
