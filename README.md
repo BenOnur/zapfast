@@ -114,6 +114,14 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   Replies from another device clear preceding unread messages. The read-receipt
   toggle also controls voice-message played receipts; account privacy is checked
   before sending receipts in direct chats. A hidden window does not read messages.
+- **Retained deleted media.** Live video and audio attachments are downloaded
+  to the account's local media folder, including when the chat is closed,
+  within the normal attachment size limit. Reveal a deleted message to play
+  its retained video or audio. Downloads finishing after deletion remain
+  attached to the deleted card and survive restarts. Existing unclaimed media
+  can be downloaded from that card while WhatsApp still has it; unavailable
+  files cannot be recovered. This retention applies even with automatic
+  downloads disabled. Removing an account or its local files removes the copy.
 - **Conversations.** See replies, reactions, edits, deleted messages, read
   receipts, sender names, and group pictures. Older messages load as you
   scroll up, first from the local archive and then from your phone.

@@ -829,7 +829,8 @@ impl Archive {
     pub fn media_paths(&self) -> Result<Vec<(String, String, std::path::PathBuf)>> {
         let mut statement = self.connection.prepare(
             "SELECT chat, id, coalesce(json_extract(content, '$.media.path'),
-                 json_extract(content, '$.card.image.path')) AS path
+                 json_extract(content, '$.card.image.path'),
+                 json_extract(content, '$.deleted_content.media.path')) AS path
              FROM messages WHERE path IS NOT NULL",
         )?;
         let rows = statement.query_map([], |row| {
@@ -924,7 +925,8 @@ impl Archive {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(chat, id) DO UPDATE SET
                 sender_name = COALESCE(excluded.sender_name, sender_name),
-                content = excluded.content,
+                content = CASE WHEN json_extract(messages.content, '$.kind') = 'revoked'
+                    THEN messages.content ELSE excluded.content END,
                 status = CASE
                     WHEN messages.status > excluded.status AND excluded.status <> ?18
                     THEN messages.status
@@ -3232,6 +3234,77 @@ pub(crate) mod tests {
         );
         let reread = archive.message(chat, "p1").expect("read").expect("exists");
         assert_eq!(reread.content, updated.content);
+    }
+
+    #[test]
+    fn deleted_video_and_audio_keep_late_downloads_and_raw_keys() {
+        for video in [true, false] {
+            let archive = Archive::in_memory().unwrap();
+            let chat = "1@s.whatsapp.net";
+            archive.ensure_chat(chat, "Synthetic").unwrap();
+            let mut row = message(chat, "retained", 100, false);
+            let media = crate::model::Media {
+                mime: if video { "video/mp4" } else { "audio/ogg" }.into(),
+                size: 10,
+                width: None,
+                height: None,
+                path: None,
+                state: Default::default(),
+            };
+            row.content = if video {
+                Content::Video {
+                    media,
+                    caption: None,
+                    seconds: Some(2),
+                    gif: false,
+                    note: false,
+                }
+            } else {
+                Content::Audio {
+                    media,
+                    seconds: Some(2),
+                    voice_note: true,
+                    waveform: vec![8, 16],
+                }
+            };
+            archive.insert_message(&row, Some(&[1, 2, 3])).unwrap();
+            let deleted = Content::Revoked {
+                deleted_content: Some(Box::new(row.content.clone())),
+            };
+            archive.set_content(chat, &row.id, &deleted, false).unwrap();
+            let path = Path::new("synthetic-retained-media");
+            archive
+                .set_media_path(chat, &row.id, path)
+                .unwrap()
+                .expect("download attached after revoke");
+            let reread = archive.message(chat, &row.id).unwrap().unwrap();
+            assert!(matches!(reread.content, Content::Revoked { .. }));
+            assert_eq!(reread.content.media().unwrap().path.as_deref(), Some(path));
+            assert_eq!(archive.raw(chat, &row.id).unwrap(), Some(vec![1, 2, 3]));
+            assert_eq!(
+                archive.media_paths().unwrap(),
+                vec![(chat.into(), row.id.clone(), path.into())]
+            );
+            archive.insert_message(&row, None).unwrap();
+            let replayed = archive.message(chat, &row.id).unwrap().unwrap();
+            assert!(matches!(replayed.content, Content::Revoked { .. }));
+            assert_eq!(
+                replayed.content.media().unwrap().path.as_deref(),
+                Some(path)
+            );
+            archive.clear_media_path(chat, &row.id).unwrap();
+            assert!(
+                archive
+                    .message(chat, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .content
+                    .media()
+                    .unwrap()
+                    .path
+                    .is_none()
+            );
+        }
     }
 
     #[test]

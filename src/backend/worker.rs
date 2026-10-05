@@ -3144,6 +3144,9 @@ impl Worker {
                     );
 
                     let revoked = Content::Revoked { deleted_content };
+                    if Self::retainable_media(&revoked) {
+                        self.download(chat.clone(), target.clone());
+                    }
                     if let Ok(true) = self.archive.set_content(&chat, &target, &revoked, false) {
                         self.emit_message(&chat, &target);
                         self.emit_chat(&chat);
@@ -3761,6 +3764,11 @@ impl Worker {
             .flatten()
             .unwrap_or(message);
         self.polish(&mut stored);
+        // Save live video/audio before a revoke, even when its chat is closed.
+        // Use the normal bounded downloader and account-specific directory.
+        if auto_reply_live && Self::retainable_media(&stored.content) {
+            self.download(chat.clone(), stored.id.clone());
+        }
         // Notify only for live incoming messages, not history replay.
         let incoming = (unread && !self.syncing).then(|| stored.clone());
         let auto_reply =
@@ -6477,6 +6485,15 @@ impl Worker {
                 }
             });
         }
+    }
+
+    fn retainable_media(content: &Content) -> bool {
+        matches!(
+            content.retained_content(),
+            Content::Video { .. } | Content::Audio { .. }
+        ) && content
+            .media()
+            .is_some_and(|media| media.path.is_none() && media.is_within_download_limit())
     }
 
     fn download(&mut self, chat: ChatId, id: String) {
@@ -12429,6 +12446,45 @@ mod receipt_tests {
         assert_eq!(receipts[0].id, PEER);
         assert!(!receipts[0].expected, "a partial list is not the audience");
         assert_eq!(receipts[0].read_at, Some(123));
+    }
+
+    #[tokio::test]
+    async fn video_retention_handles_download_finishing_after_revoke() {
+        let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
+        let mut row = incoming("retained-video", 100);
+        row.content = Content::Video {
+            media: crate::model::Media {
+                mime: "video/mp4".into(),
+                size: 10,
+                width: None,
+                height: None,
+                path: None,
+                state: Default::default(),
+            },
+            caption: None,
+            seconds: Some(2),
+            gif: false,
+            note: false,
+        };
+        assert!(Worker::retainable_media(&row.content));
+        worker.store_message(row.clone(), None, None);
+        let deleted = Content::Revoked {
+            deleted_content: Some(Box::new(row.content)),
+        };
+        worker
+            .archive
+            .set_content(PEER, &row.id, &deleted, false)
+            .unwrap();
+        let path = PathBuf::from("synthetic-retained.mp4");
+        worker.downloaded(PEER.into(), row.id.clone(), None, Ok(path.clone()));
+        let stored = worker.archive.message(PEER, &row.id).unwrap().unwrap();
+        assert!(matches!(stored.content, Content::Revoked { .. }));
+        assert_eq!(stored.content.media().unwrap().path.as_ref(), Some(&path));
+        assert!(!Worker::retainable_media(&stored.content));
+        let mut oversized = deleted;
+        oversized.media_mut().unwrap().size = crate::model::ATTACHMENT_DOWNLOAD_LIMIT + 1;
+        assert!(!Worker::retainable_media(&oversized));
+        assert!(!Worker::retainable_media(&Content::text("synthetic")));
     }
 
     /// A duplicate delivery or a history replay reclassifies the same message,

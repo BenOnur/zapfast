@@ -5009,7 +5009,14 @@ fn content(
                         .size()
                         .x
                         + 24.0;
-                    let card_width = text_width.max(title_width).min(cap);
+                    let card_width = if matches!(
+                        deleted.as_ref(),
+                        Content::Video { .. } | Content::Audio { .. }
+                    ) {
+                        cap.min(PICTURE_WIDTH).max(title_width.min(cap))
+                    } else {
+                        text_width.max(title_width).min(cap)
+                    };
                     Frame::new()
                         .stroke(Stroke::new(1.0, palette.outline))
                         .fill(palette.surface_hover)
@@ -5047,21 +5054,39 @@ fn content(
                                             palette.text,
                                         );
                                     }
-                                    Content::Video { caption, .. } => {
-                                        let desc = caption.as_deref().unwrap_or("Video");
-                                        widgets::rich_text(
-                                            ui,
-                                            &format!("🎥 {desc}"),
-                                            theme::regular(13.5),
-                                            palette.text,
-                                        );
+                                    Content::Video {
+                                        media,
+                                        seconds,
+                                        gif,
+                                        note,
+                                        caption,
+                                    } => {
+                                        if *note {
+                                            video_note(ui, view, message, media, *seconds, actions);
+                                        } else {
+                                            video(
+                                                ui, view, message, media, *seconds, *gif,
+                                                card_width, actions,
+                                            );
+                                        }
+                                        if let Some(caption) = caption {
+                                            widgets::rich_text(
+                                                ui,
+                                                caption,
+                                                theme::regular(13.5),
+                                                palette.text,
+                                            );
+                                        }
                                     }
-                                    Content::Audio { .. } => {
-                                        widgets::rich_text(
-                                            ui,
-                                            "🎤 Sesli Mesaj",
-                                            theme::regular(13.5),
-                                            palette.text,
+                                    Content::Audio {
+                                        media,
+                                        seconds,
+                                        waveform,
+                                        ..
+                                    } => {
+                                        voice_player(
+                                            ui, view, message, media, *seconds, waveform,
+                                            card_width, actions,
                                         );
                                     }
                                     Content::Sticker { .. } => {

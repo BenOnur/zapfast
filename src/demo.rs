@@ -758,7 +758,14 @@ pub fn populate(app: &mut App) {
             "ada-deleted",
             false,
             older + 60 * 25,
-            Content::revoked(),
+            Content::Revoked {
+                deleted_content: Some(Box::new(Content::Audio {
+                    media: media("audio/ogg; codecs=opus", 71_002, None, None),
+                    seconds: Some(42),
+                    voice_note: true,
+                    waveform: demo_waveform(),
+                })),
+            },
         ),
     ];
     let conversation = app.conversations.get_mut(ada).expect("sample chat");
@@ -5845,6 +5852,63 @@ mod tests {
             expanded.width() <= collapsed.width() + 2.0,
             "{collapsed:?} -> {expanded:?}"
         );
+    }
+
+    #[test]
+    fn revealed_deleted_video_and_audio_draw_playable_media_cards() {
+        for video in [true, false] {
+            let (mut app, ctx, chat) = sweep_chat(4);
+            let row = app
+                .conversations
+                .get_mut(&chat)
+                .unwrap()
+                .messages
+                .last_mut()
+                .unwrap();
+            let media = crate::model::Media {
+                mime: if video { "video/mp4" } else { "audio/ogg" }.into(),
+                size: 10,
+                width: Some(320),
+                height: Some(180),
+                path: None,
+                state: crate::model::MediaState::Failed("Synthetic unavailable".into()),
+            };
+            let original = if video {
+                Content::Video {
+                    media,
+                    caption: None,
+                    seconds: Some(2),
+                    gif: false,
+                    note: false,
+                }
+            } else {
+                Content::Audio {
+                    media,
+                    seconds: Some(2),
+                    voice_note: true,
+                    waveform: vec![8, 16],
+                }
+            };
+            row.content = Content::Revoked {
+                deleted_content: Some(Box::new(original)),
+            };
+            let id = row.id.clone();
+            render(&mut app, &ctx);
+            let collapsed = drawn_rect(&ctx, &chat, &id, "rect");
+            ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::new(("reveal_revoked", &chat, &id)), true)
+            });
+            render(&mut app, &ctx);
+            let expanded = drawn_rect(&ctx, &chat, &id, "rect");
+            assert!(
+                expanded.width() > collapsed.width() + 30.0,
+                "media needs player width: {expanded:?}"
+            );
+            assert!(
+                expanded.height() > collapsed.height() + 65.0,
+                "media controls are visible: {expanded:?}"
+            );
+        }
     }
 
     #[test]

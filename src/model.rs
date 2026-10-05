@@ -806,8 +806,21 @@ impl Content {
         matches!(self, Self::Unsupported { .. } | Self::PhoneOnly { .. })
     }
 
+    /// Original locally retained content, without changing the deleted status.
+    pub fn retained_content(&self) -> &Content {
+        match self {
+            Self::Revoked {
+                deleted_content: Some(content),
+            } => content.retained_content(),
+            _ => self,
+        }
+    }
+
     pub fn media(&self) -> Option<&Media> {
         match self {
+            Self::Revoked {
+                deleted_content: Some(content),
+            } => content.media(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }
@@ -857,6 +870,9 @@ impl Content {
 
     pub fn media_mut(&mut self) -> Option<&mut Media> {
         match self {
+            Self::Revoked {
+                deleted_content: Some(content),
+            } => content.media_mut(),
             Self::Image { media, .. }
             | Self::Video { media, .. }
             | Self::Audio { media, .. }

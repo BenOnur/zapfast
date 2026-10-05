@@ -6173,7 +6173,7 @@ impl App {
         else {
             return;
         };
-        if row.from_me {
+        if row.from_me || matches!(row.content, Content::Revoked { .. }) {
             return;
         }
         let sender = row.sender.clone();
@@ -9827,6 +9827,73 @@ mod tests {
             commands.try_recv(),
             Ok(Command::MarkPlayed { message, .. }) if message == "clip"
         ));
+        // Leaving the chat stops it.
+        app.open_chat = None;
+        app.tick_video(&ctx);
+        assert!(app.video.message().is_none());
+    }
+
+    #[test]
+    fn deleted_video_plays_after_download_without_a_played_receipt() {
+        let mut app = app();
+        app.video.silence();
+        let chat = "fixture@s.whatsapp.net";
+        let mut clip = message(chat, "clip", 1);
+        clip.content = Content::Video {
+            caption: None,
+            media: Media {
+                mime: "video/mp4".into(),
+                size: 100,
+                width: None,
+                height: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            seconds: Some(3),
+            gif: false,
+            note: true,
+        };
+        clip.content = Content::Revoked {
+            deleted_content: Some(Box::new(clip.content)),
+        };
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![clip], false);
+        app.open_chat = Some(chat.into());
+        let ctx = egui::Context::default();
+        app.apply(Action::PlayVideoWhenDownloaded("clip".into()), &ctx);
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let path = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/video/sample.mp4"
+        ));
+        events
+            .send(Event::Media {
+                card: None,
+                chat: chat.into(),
+                message: "clip".into(),
+                result: Ok(path.clone()),
+            })
+            .unwrap();
+        app.handle_events();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.apply_actions(&ctx);
+        assert_eq!(app.video.message(), Some("clip"));
+        assert!(
+            commands.try_recv().is_err(),
+            "retained playback sends no played receipt"
+        );
+        let row = app
+            .conversations
+            .get(chat)
+            .unwrap()
+            .message("clip")
+            .unwrap();
+        assert!(matches!(row.content, Content::Revoked { .. }));
+        assert_eq!(row.content.media().unwrap().path.as_ref(), Some(&path));
         // Leaving the chat stops it.
         app.open_chat = None;
         app.tick_video(&ctx);
