@@ -1670,6 +1670,7 @@ struct View<'a> {
     palette: Palette,
     locale: crate::i18n::Locale,
     chat: &'a Chat,
+    plugins: &'a crate::plugins::PluginManager,
     me: Option<&'a str>,
     auto_download: bool,
     connected: bool,
@@ -1780,6 +1781,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         palette,
         locale: app.locale,
         chat,
+        plugins: &app.plugins,
         me: app.me.as_deref(),
         auto_download: app.account().settings.auto_download,
         connected: app.link.is_connected(),
@@ -4371,14 +4373,8 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
             message: message.id.clone(),
         }));
     }
-    if crate::quote::message_text(&message.content).is_some()
-        && widgets::menu_item(ui, &palette, Some(Icon::Quote), "Quote")
-    {
-        actions.push(Action::OpenQuote {
-            chat: chat.clone(),
-            message: message.id.clone(),
-        });
-    }
+    view.plugins
+        .dispatch_message_context_menu(ui, &palette, message, chat, actions);
     // The id helps when looking a message up for a bug report.
     if widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy message ID") {
         actions.push(Action::CopyText(message.id.clone()));
@@ -4987,7 +4983,7 @@ fn content(
                 vec2(reserve, header.height()),
             );
 
-            if revealed {
+            if revealed && view.plugins.is_enabled("anti_delete") {
                 ui.add_space(6.0);
                 let card_radius = if palette.is_system24() { 0 } else { 6 };
                 if let Some(deleted) = deleted_content {

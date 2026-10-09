@@ -24,6 +24,7 @@ pub mod model;
 pub mod notify;
 pub mod opener;
 pub mod paths;
+pub mod plugins;
 pub mod privacy;
 pub mod proxy;
 pub mod qr;

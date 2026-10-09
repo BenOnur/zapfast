@@ -452,23 +452,70 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
-    let mut auto_replies = Section::new(translated(locale, "Automatic replies"));
-    auto_replies.row(
-        translated(locale, "Enable automatic replies"),
+    let mut plugins_section = Section::new(translated(locale, "Plugins"));
+    plugins_section.row(
+        translated(locale, "Quoter"),
         translated(
             locale,
-            "Select friends or groups below. ZapFast must be running and connected.",
+            "Mesaj sağ tık menüsünden Equicord tarzı yüksek çözünürlüklü alıntı kartları üretir.",
         ),
         |ui, app| {
-            let mut enabled = app.account().settings.auto_reply_enabled;
+            let mut enabled = app.plugins.is_enabled("quoter");
             if widgets::switch(ui, &app.palette, &mut enabled).changed() {
-                app.actions.push(Action::SetAutoReplyEnabled(enabled));
+                app.actions.push(Action::SetPluginEnabled {
+                    id: "quoter".to_string(),
+                    enabled,
+                });
             }
         },
     );
-    auto_replies.block(
-        vec![translated(locale, "Commands and replies")],
-        auto_reply_editor,
+    plugins_section.row(
+        translated(locale, "Anti-Delete"),
+        translated(
+            locale,
+            "Karşı tarafın sildiği mesajları ve medyayı yerel arşivde tutar ve oynatır.",
+        ),
+        |ui, app| {
+            let mut enabled = app.plugins.is_enabled("anti_delete");
+            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
+                app.actions.push(Action::SetPluginEnabled {
+                    id: "anti_delete".to_string(),
+                    enabled,
+                });
+            }
+        },
+    );
+    plugins_section.row(
+        translated(locale, "Auto Responder"),
+        translated(
+            locale,
+            "Seçili sohbetlerde gelen komutlara (/komut) 1 saniye gecikmeyle otomatik yanıt gönderir.",
+        ),
+        |ui, app| {
+            let mut enabled = app.plugins.is_enabled("auto_reply");
+            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
+                app.actions.push(Action::SetPluginEnabled {
+                    id: "auto_reply".to_string(),
+                    enabled,
+                });
+            }
+        },
+    );
+    plugins_section.block(
+        vec![
+            translated(locale, "Commands and replies"),
+            translated(locale, "Automatic replies"),
+        ],
+        |ui, app| {
+            if app.plugins.is_enabled("auto_reply") {
+                auto_reply_editor(ui, app);
+            } else {
+                ui.label(crate::i18n::gettext(
+                    app.locale,
+                    "Auto Responder eklentisi devre dışı.",
+                ));
+            }
+        },
     );
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
@@ -788,7 +835,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
-        auto_replies,
+        plugins_section,
         notifications,
         privacy,
         system,
@@ -796,6 +843,10 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+pub fn render_auto_reply_plugin_editor(ui: &mut egui::Ui, app: &mut App) {
+    auto_reply_editor(ui, app);
 }
 
 fn auto_reply_editor(ui: &mut egui::Ui, app: &mut App) {

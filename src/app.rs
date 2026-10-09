@@ -526,6 +526,7 @@ pub struct App {
 
     pub page: Page,
     pub dialog: Option<Dialog>,
+    pub plugins: crate::plugins::PluginManager,
     pub quote_editor: Option<crate::quote::Editor>,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
@@ -973,6 +974,8 @@ impl App {
         // With a password set, ZapFast starts locked.
         let app_lock = crate::app_lock::AppLock::new(settings.app_lock_hash.is_some());
         let tray_lockable = settings.app_lock_hash.is_some();
+        let mut plugins = crate::plugins::PluginManager::default();
+        plugins.apply_saved_states(&settings.plugins);
         let mut app = Self {
             dirs,
             settings,
@@ -1076,6 +1079,7 @@ impl App {
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
             dialog: None,
+            plugins,
             quote_editor: None,
             forward_search: String::new(),
             group_name_edit: None,
@@ -1511,8 +1515,9 @@ impl App {
 
     /// Only the live-incoming event enters here; archive pages, history,
     /// edits, and our outgoing deliveries never trigger an automatic reply.
-    fn maybe_auto_reply(&mut self, chat_id: &str, message: &Message) {
-        if !self.account().settings.auto_reply_enabled
+    pub(crate) fn maybe_auto_reply(&mut self, chat_id: &str, message: &Message) {
+        if !self.plugins.is_enabled("auto_reply")
+            || !self.account().settings.auto_reply_enabled
             || !self.is_connected()
             || self.syncing
             || self.app_lock.is_locked()
@@ -1566,7 +1571,8 @@ impl App {
     }
 
     fn flush_auto_replies(&mut self, ctx: &egui::Context, now: Instant) {
-        if !self.account().settings.auto_reply_enabled
+        if !self.plugins.is_enabled("auto_reply")
+            || !self.account().settings.auto_reply_enabled
             || !self.is_connected()
             || self.syncing
             || self.app_lock.is_locked()
@@ -4251,6 +4257,11 @@ impl App {
                 self.emoji_start = None;
                 self.mention_start = None;
                 self.reaction_target = None;
+            }
+            Action::SetPluginEnabled { id, enabled } => {
+                self.plugins.set_enabled(&id, enabled);
+                self.settings.plugins = self.plugins.export_states();
+                self.mark_settings_dirty();
             }
             Action::ExportQuote(export) => {
                 if self.dialog != Some(Dialog::Quote) {

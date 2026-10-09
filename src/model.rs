@@ -1325,6 +1325,10 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    SetPluginEnabled {
+        id: String,
+        enabled: bool,
+    },
     ExportQuote(crate::quote::Export),
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
