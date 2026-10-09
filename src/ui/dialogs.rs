@@ -22,6 +22,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .backdrop_color(palette.shadow)
         .show(ctx, |ui| {
             ui.set_width(match dialog {
+                Dialog::Quote => 820.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(160.0)),
                 Dialog::Shortcuts => shortcuts_width(ui.ctx().content_rect().width()),
                 Dialog::About => 380.0,
                 Dialog::ConfirmUnlink => 380.0,
@@ -50,6 +51,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
+                Dialog::Quote => super::quote::show(app, ui),
                 Dialog::CreatePoll(chat) => super::polls::create(app, ui, &chat),
                 Dialog::PollResults { chat, message } => {
                     super::polls::results(app, ui, &chat, &message)

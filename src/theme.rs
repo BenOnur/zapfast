@@ -695,6 +695,7 @@ fastframe_icons::icons! {
         DeliveryTick => "delivery-tick",
         DeliveryTicks => "delivery-ticks",
         Copy => lucide "copy",
+        Quote => "quote",
         Download => "download",
         Timer => "timer",
         Ellipsis => lucide "ellipsis",

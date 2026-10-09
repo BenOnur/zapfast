@@ -1724,6 +1724,24 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
     };
     for part in page.split(',').map(str::trim) {
         match part {
+            "quote" => {
+                let chat = app
+                    .open_chat
+                    .clone()
+                    .unwrap_or_else(|| SAMPLES[0].id.into());
+                let draft = crate::quote::Draft {
+                    text: "Hayat, plan yaparken başımıza gelen şeydir.\n\nBiraz cesaret, biraz kahve. ☕✨".into(),
+                    author: "Deniz Yılmaz".into(),
+                    avatar: app.avatar(SAMPLES[0].id),
+                    show_avatar: true, dark: true, portrait: false,
+                };
+                app.quote_editor = Some(crate::quote::Editor::new(
+                    app.account().id.clone(),
+                    chat,
+                    draft,
+                ));
+                app.dialog = Some(Dialog::Quote);
+            }
             "chat" | "" => {}
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
@@ -4213,6 +4231,7 @@ mod tests {
             render(&mut app, &ctx);
         }
         for page in [
+            "quote",
             "chat-menu",
             "chat-header-menu",
             "channel",
@@ -6306,6 +6325,7 @@ mod tests {
             );
         }
         assert_eq!(find("Message info").1, Role::Button);
+        assert_eq!(find("Quote").1, Role::Button);
         let (_, role, copy) = find("Copy message ID");
         assert_eq!(role, Role::Button);
 
@@ -6321,6 +6341,61 @@ mod tests {
         };
         click(&mut app, copy);
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
+    }
+
+    #[test]
+    fn quote_editor_export_buttons_remain_visible_in_a_small_window() {
+        for (size, error) in [
+            (egui::vec2(420.0, 420.0), false),
+            (egui::vec2(420.0, 420.0), true),
+            (egui::vec2(1180.0, 780.0), false),
+        ] {
+            let mut app = app();
+            apply_flags(&mut app, Some("quote"));
+            if error {
+                app.quote_editor.as_mut().unwrap().error = Some("Metin bu karta okunaklı sığmıyor. Metni kısalt veya dikey boyutu seç. Gönderim için önce geçerli bir kart oluştur.".into());
+            }
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            let mut found = std::collections::HashSet::new();
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.frame_ui(ui);
+                    },
+                );
+                output.textures_delta.clear();
+                if let Some(tree) = output.platform_output.accesskit_update {
+                    for (_, node) in tree.nodes {
+                        if let Some(label) = node.label()
+                            && ["PNG kaydet", "Görseli kopyala", "Sohbete ekle", "Kapat"]
+                                .contains(&label)
+                        {
+                            let bounds = node.bounds().unwrap();
+                            let scale = ctx.pixels_per_point() as f64;
+                            assert!(
+                                bounds.x0 >= 0.0
+                                    && bounds.y0 >= 0.0
+                                    && bounds.x1 <= size.x as f64 * scale
+                                    && bounds.y1 <= size.y as f64 * scale,
+                                "{label} outside {size:?}: {bounds:?}"
+                            );
+                            found.insert(label.to_owned());
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                found.len(),
+                4,
+                "all export/close controls must stay visible"
+            );
+        }
     }
 
     /// Opening the log hands it to the worker, which waits to see it open or

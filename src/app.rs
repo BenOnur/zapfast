@@ -526,6 +526,7 @@ pub struct App {
 
     pub page: Page,
     pub dialog: Option<Dialog>,
+    pub quote_editor: Option<crate::quote::Editor>,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
     /// The group name being typed in the group info dialog.
@@ -1075,6 +1076,7 @@ impl App {
             scroll_route: ScrollRoute::default(),
             page: Page::Chats,
             dialog: None,
+            quote_editor: None,
             forward_search: String::new(),
             group_name_edit: None,
             new_contact_to_phone: true,
@@ -1239,6 +1241,7 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        self.quote_editor = None;
         // The locked folder and the picker show the previous account's chats
         // and stickers.
         if self.locked_folder {
@@ -3058,6 +3061,16 @@ impl App {
             }
             LinkStatus::LoggedOut => {
                 let account = self.account().id.clone();
+                if self
+                    .quote_editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.account == account)
+                {
+                    self.quote_editor = None;
+                    if self.dialog == Some(Dialog::Quote) {
+                        self.dialog = None;
+                    }
+                }
                 self.poll_voting.clear();
                 self.interactive_sending.clear();
                 self.poll_creating = false;
@@ -4191,7 +4204,92 @@ impl App {
             return;
         }
         match action {
+            Action::OpenQuote { chat, message } => {
+                let Some(row) = self
+                    .conversations
+                    .get(&chat)
+                    .and_then(|c| c.message(&message))
+                    .cloned()
+                else {
+                    return;
+                };
+                let Some(text) = crate::quote::message_text(&row.content) else {
+                    return;
+                };
+                let author = if row.from_me {
+                    self.me_name
+                        .clone()
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or_else(|| "Ben".into())
+                } else {
+                    self.display_name_or(&row.sender, row.sender_name.as_deref())
+                };
+                let draft = crate::quote::Draft {
+                    text: self.preview_line(text, &row),
+                    author,
+                    avatar: self.avatar(&row.sender),
+                    show_avatar: true,
+                    dark: true,
+                    portrait: false,
+                };
+                self.quote_editor = Some(crate::quote::Editor::new(
+                    self.account().id.clone(),
+                    chat,
+                    draft,
+                ));
+                self.dialog = Some(Dialog::Quote);
+                self.picker = None;
+                self.emoji_start = None;
+                self.mention_start = None;
+                self.reaction_target = None;
+            }
+            Action::ExportQuote(export) => {
+                if self.dialog != Some(Dialog::Quote) {
+                    return;
+                }
+                let Some(editor) = &self.quote_editor else {
+                    return;
+                };
+                if editor.account != self.account().id {
+                    return;
+                }
+                let Some(image) = editor.image.clone() else {
+                    return;
+                };
+                match export {
+                    crate::quote::Export::Copy => match write_clipboard_image(&image) {
+                        Ok(()) => {
+                            if let Some(editor) = &mut self.quote_editor {
+                                editor.notice = Some("Görsel kopyalandı.".into());
+                            }
+                        }
+                        Err(_) => self.toast_error("Görsel kopyalanamadı."),
+                    },
+                    crate::quote::Export::Save => {
+                        if let Some(editor) = &mut self.quote_editor {
+                            editor.save();
+                        }
+                    }
+                    crate::quote::Export::Attach => {
+                        if self.open_chat.as_ref() != Some(&editor.chat)
+                            || !self.chat(&editor.chat).is_some_and(|chat| chat.can_send())
+                        {
+                            return;
+                        }
+                        self.pending.push(Pending::Picture {
+                            width: image.width,
+                            height: image.height,
+                            rgba: std::sync::Arc::new(image.bytes.clone()),
+                            texture: None,
+                        });
+                        self.dialog = None;
+                        self.quote_editor = None;
+                        self.refocus_composer(ctx);
+                    }
+                }
+            }
             Action::Open(page) => {
+                self.quote_editor = None;
                 let opens_chats = page == Page::Chats;
                 // Privacy can change on the phone at any time, and nothing
                 // announces it: read it again whenever Settings opens.
@@ -5153,6 +5251,9 @@ impl App {
                 self.backend.send(Command::SetFavorite(chat, favorite));
             }
             Action::ShowDialog(dialog) => {
+                if dialog != Dialog::Quote {
+                    self.quote_editor = None;
+                }
                 self.clear_chat_lock_entry();
                 if dialog == Dialog::NewChat {
                     self.new_chat_search.clear();
@@ -5180,6 +5281,7 @@ impl App {
                 self.dialog = Some(dialog);
             }
             Action::CloseDialog => {
+                self.quote_editor = None;
                 self.clear_chat_lock_entry();
                 self.dialog = None;
                 self.invite = None;
@@ -5942,6 +6044,10 @@ impl App {
             return;
         }
         self.app_lock.lock();
+        self.quote_editor = None;
+        if self.dialog == Some(Dialog::Quote) {
+            self.dialog = None;
+        }
         self.window_focused = false;
         self.flush_open_draft();
         self.recording = None;
@@ -6294,6 +6400,9 @@ impl App {
     }
 
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
+        if self.dialog != Some(Dialog::Quote) {
+            self.quote_editor = None;
+        }
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
         self.copy_rows
@@ -6831,6 +6940,89 @@ mod tests {
         let roster = AccountRoster::load(&app.dirs.accounts_file()).unwrap();
         assert_eq!(roster.order, ["1".to_string(), "2".to_string()]);
         assert_eq!(roster.active, "1");
+    }
+
+    #[test]
+    fn quote_uses_group_author_and_stages_pixels_without_sending_or_editing() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        crate::demo::populate(&mut app);
+        let chat = app
+            .chats
+            .iter()
+            .find(|chat| chat.is_group() && !chat.locked)
+            .unwrap()
+            .id
+            .clone();
+        let row = app.conversations[&chat]
+            .messages
+            .iter()
+            .find(|row| !row.from_me && crate::quote::message_text(&row.content).is_some())
+            .unwrap()
+            .clone();
+        let author = app.display_name_or(&row.sender, row.sender_name.as_deref());
+        app.open_chat = Some(chat.clone());
+        app.composer = "unsent draft".into();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::OpenQuote {
+                chat: chat.clone(),
+                message: row.id.clone(),
+            },
+            &ctx,
+        );
+        let editor = app.quote_editor.as_mut().unwrap();
+        assert_eq!(editor.draft.author, author);
+        editor.draft.text = "Edited only on card".into();
+        editor.image = Some(std::sync::Arc::new(crate::model::DecodedImage {
+            width: 1,
+            height: 1,
+            bytes: vec![255; 4],
+        }));
+        app.apply(Action::ExportQuote(crate::quote::Export::Attach), &ctx);
+        assert_eq!(app.composer, "unsent draft");
+        assert_eq!(app.conversations[&chat].message(&row.id), Some(&row));
+        assert_eq!(app.pending.len(), 1);
+        assert!(app.dialog.is_none());
+        assert!(app.quote_editor.is_none());
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SendImage { .. } | Command::EditText { .. } | Command::SendText { .. }
+            ))
+        );
+    }
+
+    #[test]
+    fn quote_cannot_attach_to_a_different_account_or_chat_and_is_cleared_on_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        crate::demo::populate(&mut app);
+        crate::demo::apply_flags(&mut app, Some("quote"));
+        let ctx = egui::Context::default();
+        let original_chat = app.quote_editor.as_ref().unwrap().chat.clone();
+        let editor = app.quote_editor.as_mut().unwrap();
+        editor.image = Some(std::sync::Arc::new(crate::model::DecodedImage {
+            width: 1,
+            height: 1,
+            bytes: vec![255; 4],
+        }));
+        app.open_chat = Some("other-chat".into());
+        app.apply(Action::ExportQuote(crate::quote::Export::Attach), &ctx);
+        assert!(app.pending.is_empty());
+        app.open_chat = Some(original_chat);
+        app.quote_editor.as_mut().unwrap().account = AccountId("999".into());
+        app.apply(Action::ExportQuote(crate::quote::Export::Attach), &ctx);
+        assert!(app.pending.is_empty());
+        app.settings.app_lock_hash = Some(crate::app_lock::verifier("synthetic-password"));
+        app.lock_app();
+        assert!(app.quote_editor.is_none());
+        assert_ne!(app.dialog, Some(Dialog::Quote));
+        crate::demo::apply_flags(&mut app, Some("quote"));
+        app.clear_account_ui();
+        assert!(app.quote_editor.is_none());
     }
 
     /// Two accounts, the second with a recording backend; the first on screen.

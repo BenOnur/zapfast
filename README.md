@@ -50,6 +50,11 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   start, keyring key included; if that cannot finish (a locked keyring, or a
   folder already in the way), ZapFast stops without moving anything and says
   why in its log.
+- **Quote cards.** Right-click a text message or media caption and choose
+  **Quote** to edit its text and author in a local card with a live preview.
+  Choose dark/light, square/portrait, and avatar visibility. Save a PNG, copy
+  the image, or stage it as an attachment without sending it or changing the
+  original message. Cards are generated locally, with no external service.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,
   and message status. Search chats, saved messages, and contacts. The
   **Search** icon in a chat's header (or **Ctrl+F**) opens a pane beside the

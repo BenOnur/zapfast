@@ -4209,6 +4209,14 @@ fn context_menu(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: 
         },
     );
     widgets::menu_separator(ui, &palette);
+    if crate::quote::message_text(&message.content).is_some()
+        && widgets::menu_item(ui, &palette, Some(Icon::Quote), "Quote")
+    {
+        actions.push(Action::OpenQuote {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
+    }
     if !matches!(message.content, Content::Revoked { .. })
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {

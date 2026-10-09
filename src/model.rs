@@ -1132,6 +1132,7 @@ pub struct Gif {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dialog {
+    Quote,
     Shortcuts,
     About,
     ConfirmUnlink,
@@ -1320,6 +1321,11 @@ pub enum Scroll {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    OpenQuote {
+        chat: ChatId,
+        message: String,
+    },
+    ExportQuote(crate::quote::Export),
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,
