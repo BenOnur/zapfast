@@ -2733,7 +2733,16 @@ impl App {
             Event::Avatar { id, full, path } => {
                 if full {
                     self.avatar_full_requests.remove(&id);
-                    self.avatars_full.insert(id, path);
+                    self.avatars_full.insert(id.clone(), path.clone());
+                    let account = self.account().id.clone();
+                    if live
+                        && let Some(editor) = &mut self.quote_editor
+                        && editor.account == account
+                        && editor.avatar_id.as_deref() == Some(id.as_str())
+                        && let Some(path) = path
+                    {
+                        editor.upgrade_avatar(path);
+                    }
                 } else {
                     self.avatar_requests.remove(&id);
                     self.avatars.insert(id, path);
@@ -4227,16 +4236,16 @@ impl App {
                 let draft = crate::quote::Draft {
                     text: self.preview_line(text, &row),
                     author,
-                    avatar: self.avatar(&row.sender),
+                    avatar: self
+                        .avatar_full(&row.sender)
+                        .or_else(|| self.avatar(&row.sender)),
                     show_avatar: true,
                     dark: true,
                     portrait: false,
                 };
-                self.quote_editor = Some(crate::quote::Editor::new(
-                    self.account().id.clone(),
-                    chat,
-                    draft,
-                ));
+                let mut editor = crate::quote::Editor::new(self.account().id.clone(), chat, draft);
+                editor.avatar_id = Some(row.sender);
+                self.quote_editor = Some(editor);
                 self.dialog = Some(Dialog::Quote);
                 self.picker = None;
                 self.emoji_start = None;
@@ -6965,6 +6974,11 @@ mod tests {
         app.composer = "unsent draft".into();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
+        let low = directory.path().join("preview.png");
+        let full = directory.path().join("full.png");
+        app.avatars.insert(row.sender.clone(), Some(low.clone()));
+        app.avatars_full.remove(&row.sender);
+        app.avatar_full_requests.remove(&row.sender);
         let ctx = egui::Context::default();
         app.apply(
             Action::OpenQuote {
@@ -6973,9 +6987,61 @@ mod tests {
             },
             &ctx,
         );
+        assert!(std::iter::from_fn(|| commands.try_recv().ok()).any(
+            |command| matches!(command, Command::FetchAvatar { id, full: true } if id == row.sender)
+        ));
         let editor = app.quote_editor.as_mut().unwrap();
         assert_eq!(editor.draft.author, author);
+        assert_eq!(editor.draft.avatar.as_ref(), Some(&low));
         editor.draft.text = "Edited only on card".into();
+        editor.draft.show_avatar = false;
+        app.apply_backend_event(
+            Event::Avatar {
+                id: "another-person".into(),
+                full: true,
+                path: Some(full.clone()),
+            },
+            true,
+        );
+        app.apply_backend_event(
+            Event::Avatar {
+                id: row.sender.clone(),
+                full: true,
+                path: Some(full.clone()),
+            },
+            false,
+        );
+        assert_eq!(
+            app.quote_editor.as_ref().unwrap().draft.avatar.as_ref(),
+            Some(&low)
+        );
+        app.quote_editor.as_mut().unwrap().account = AccountId("999".into());
+        app.apply_backend_event(
+            Event::Avatar {
+                id: row.sender.clone(),
+                full: true,
+                path: Some(full.clone()),
+            },
+            true,
+        );
+        assert_eq!(
+            app.quote_editor.as_ref().unwrap().draft.avatar.as_ref(),
+            Some(&low)
+        );
+        app.quote_editor.as_mut().unwrap().account = app.account().id.clone();
+        app.apply_backend_event(
+            Event::Avatar {
+                id: row.sender.clone(),
+                full: true,
+                path: Some(full.clone()),
+            },
+            true,
+        );
+        let editor = app.quote_editor.as_mut().unwrap();
+        assert_eq!(editor.draft.avatar.as_ref(), Some(&full));
+        assert_eq!(editor.original.avatar.as_ref(), Some(&full));
+        assert_eq!(editor.draft.text, "Edited only on card");
+        assert!(!editor.draft.show_avatar);
         editor.image = Some(std::sync::Arc::new(crate::model::DecodedImage {
             width: 1,
             height: 1,
@@ -6992,6 +7058,23 @@ mod tests {
                 command,
                 Command::SendImage { .. } | Command::EditText { .. } | Command::SendText { .. }
             ))
+        );
+
+        // Reopening uses the cached full picture immediately, without another lookup.
+        app.apply(
+            Action::OpenQuote {
+                chat,
+                message: row.id.clone(),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.quote_editor.as_ref().unwrap().draft.avatar.as_ref(),
+            Some(&full)
+        );
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::FetchAvatar { full: true, .. }))
         );
     }
 

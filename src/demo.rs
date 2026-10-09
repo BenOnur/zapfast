@@ -6325,8 +6325,14 @@ mod tests {
             );
         }
         assert_eq!(find("Message info").1, Role::Button);
-        assert_eq!(find("Quote").1, Role::Button);
+        let (_, quote_role, quote) = find("Quote");
+        assert_eq!(quote_role, Role::Button);
         let (_, role, copy) = find("Copy message ID");
+        assert!(find("Delete for me").2.y < quote.y && quote.y < copy.y);
+        assert!(
+            (copy.y - quote.y).abs() < 40.0,
+            "Quote immediately precedes Copy message ID"
+        );
         assert_eq!(role, Role::Button);
 
         let click = |app: &mut App, pos: egui::Pos2| {

@@ -55,6 +55,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   The default 1200×600 layout uses
   a large portrait fading into the background on the left and centered
   quote text on the right, with the bundled M PLUS Rounded 1c Light font.
+  Quote sits immediately above **Copy message ID** in the message menu.
+  It requests the full-size profile picture and updates the card when it
+  arrives, preserving your text edits. If no full picture is available,
+  the existing avatar remains as a fallback.
   Choose dark/light, landscape/portrait, and avatar visibility. Save a PNG, copy
   the image, or stage it as an attachment without sending it or changing the
   original message. Cards are generated locally, with no external service.

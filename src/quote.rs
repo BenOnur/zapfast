@@ -40,6 +40,7 @@ pub enum Export {
 pub struct Editor {
     pub account: AccountId,
     pub chat: String,
+    pub avatar_id: Option<String>,
     pub draft: Draft,
     pub original: Draft,
     pub image: Option<Arc<DecodedImage>>,
@@ -72,6 +73,7 @@ impl Editor {
         let mut editor = Self {
             account,
             chat,
+            avatar_id: None,
             original: draft.clone(),
             draft,
             image: None,
@@ -85,6 +87,13 @@ impl Editor {
         };
         editor.changed();
         editor
+    }
+
+    /// Upgrade only the picture; asynchronous arrival must preserve the edits.
+    pub fn upgrade_avatar(&mut self, path: PathBuf) {
+        self.original.avatar = Some(path.clone());
+        self.draft.avatar = Some(path);
+        self.changed();
     }
 
     pub fn changed(&mut self) {
@@ -685,6 +694,7 @@ mod tests {
         let mut editor = Editor {
             account: AccountId::first(),
             chat: "synthetic".into(),
+            avatar_id: None,
             draft: draft(),
             original: draft(),
             image: None,
