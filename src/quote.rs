@@ -180,11 +180,21 @@ impl Default for Renderer {
 impl Renderer {
     pub fn new() -> Self {
         let ctx = egui::Context::default();
-        ctx.set_fonts(
-            fastframe_fonts::FontSetup::default()
-                .primary(fastframe_fonts::Primary::Inter)
-                .definitions(),
+        let mut fonts = fastframe_fonts::FontSetup::default()
+            .primary(fastframe_fonts::Primary::Inter)
+            .definitions();
+        fonts.font_data.insert(
+            "quote-rounded".into(),
+            Arc::new(egui::FontData::from_static(include_bytes!(
+                "../assets/fonts/MPLUSRounded1c-Light.ttf"
+            ))),
         );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "quote-rounded".into());
+        ctx.set_fonts(fonts);
         Self {
             ctx,
             emoji: fastframe_emoji::EmojiSetup::default()
@@ -201,18 +211,18 @@ impl Renderer {
         if draft.text.chars().count() > 6000 || draft.author.chars().count() > 200 {
             return Err("Metin çok uzun. Alıntıyı 6000, ismi 200 karakterin altına indir.".into());
         }
-        let height = if draft.portrait { 1350 } else { 1080 };
+        let width = 1200;
+        let height = if draft.portrait { 1350 } else { 600 };
         let background = if draft.dark {
-            Color32::from_rgb(21, 23, 29)
+            Color32::BLACK
         } else {
-            Color32::from_rgb(246, 243, 235)
+            Color32::WHITE
         };
         let foreground = if draft.dark {
-            Color32::from_rgb(246, 243, 235)
+            Color32::WHITE
         } else {
-            Color32::from_rgb(27, 30, 36)
+            Color32::BLACK
         };
-        let accent = Color32::from_rgb(176, 148, 105);
         let mut error = None;
         let mut held = Vec::new();
         let avatar = draft
@@ -229,83 +239,56 @@ impl Renderer {
             });
         let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1080.0, height as f32))),
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    vec2(width as f32, height as f32),
+                )),
                 ..Default::default()
             },
             |ui| {
                 let painter = ui.painter();
                 painter.rect_filled(
-                    Rect::from_min_size(Pos2::ZERO, vec2(1080.0, height as f32)),
+                    Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32)),
                     0.0,
                     background,
                 );
-                painter.text(
-                    pos2(100.0, 100.0),
-                    egui::Align2::LEFT_TOP,
-                    "“",
-                    egui::FontId::proportional(144.0),
-                    accent,
-                );
-                let mut size = 64.0;
-                let (galley, placements) = loop {
-                    let layout = layout(ui, &draft.text, size, foreground, 880.0);
-                    if layout.0.size().y <= height as f32 - 490.0 && layout.0.size().x <= 881.0 {
-                        break layout;
-                    }
-                    size -= 2.0;
-                    if size < 28.0 {
-                        error = Some(
-                            "Metin bu karta okunaklı sığmıyor. Metni kısalt veya dikey boyutu seç."
-                                .into(),
-                        );
-                        return;
-                    }
-                };
-                let origin = pos2(
-                    100.0,
-                    250.0 + (height as f32 - 490.0 - galley.size().y) / 2.0,
-                );
-                paint_text(
-                    ui,
-                    &self.emoji,
-                    galley,
-                    &placements,
-                    origin,
-                    foreground,
-                    &mut held,
-                );
-                let author_y = height as f32 - 150.0;
-                painter.line_segment(
-                    [pos2(100.0, author_y - 48.0), pos2(200.0, author_y - 48.0)],
-                    egui::Stroke::new(3.0, accent),
-                );
-                let name_x = if draft.show_avatar { 200.0 } else { 100.0 };
+                // Match the Quoter composition: a full-height portrait fades into
+                // the background from x=200 to x=600 on the 1200×600 canvas.
+                let photo_size = 600u32;
+                let photo_y = (height as f32 - photo_size as f32) / 2.0;
                 if draft.show_avatar {
-                    let rect = Rect::from_min_size(pos2(100.0, author_y - 20.0), vec2(72.0, 72.0));
-                    if let Some(avatar) = &avatar {
-                        let mut rgba = avatar
-                            .resize_to_fill(144, 144, image::imageops::FilterType::Lanczos3)
-                            .to_rgba8();
-                        for (x, y, pixel) in rgba.enumerate_pixels_mut() {
-                            let distance = ((x as f32 + 0.5 - 72.0).powi(2)
-                                + (y as f32 + 0.5 - 72.0).powi(2))
-                            .sqrt();
-                            pixel[3] = (pixel[3] as f32 * (72.0 - distance).clamp(0.0, 1.0)) as u8;
-                        }
-                        let texture = ui.ctx().load_texture(
-                            "quote-avatar",
-                            egui::ColorImage::from_rgba_unmultiplied([144, 144], rgba.as_raw()),
-                            egui::TextureOptions::LINEAR,
-                        );
-                        painter.image(
-                            texture.id(),
-                            rect,
-                            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                        held.push(texture);
+                    let mut rgba = if let Some(avatar) = &avatar {
+                        avatar
+                            .resize_to_fill(
+                                photo_size,
+                                photo_size,
+                                image::imageops::FilterType::Lanczos3,
+                            )
+                            .to_rgba8()
                     } else {
-                        painter.circle_filled(rect.center(), 36.0, accent);
+                        image::RgbaImage::from_pixel(
+                            photo_size,
+                            photo_size,
+                            image::Rgba([80, 80, 80, 255]),
+                        )
+                    };
+                    for (x, _, pixel) in rgba.enumerate_pixels_mut() {
+                        let opacity = 1.0 - ((x as f32 - 200.0) / 400.0).clamp(0.0, 1.0);
+                        pixel[3] = (pixel[3] as f32 * opacity).round() as u8;
+                    }
+                    let texture = ui.ctx().load_texture(
+                        "quote-avatar",
+                        egui::ColorImage::from_rgba_unmultiplied([600, 600], rgba.as_raw()),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    painter.image(
+                        texture.id(),
+                        Rect::from_min_size(pos2(0.0, photo_y), vec2(600.0, 600.0)),
+                        Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                    held.push(texture);
+                    if avatar.is_none() {
                         let initial = draft
                             .author
                             .trim()
@@ -315,26 +298,62 @@ impl Renderer {
                             .to_uppercase()
                             .to_string();
                         painter.text(
-                            rect.center(),
+                            pos2(170.0, photo_y + 300.0),
                             egui::Align2::CENTER_CENTER,
                             initial,
-                            egui::FontId::proportional(32.0),
-                            background,
+                            egui::FontId::proportional(144.0),
+                            foreground,
                         );
                     }
                 }
-                let (name, placements) =
-                    layout(ui, draft.author.trim(), 30.0, foreground, 980.0 - name_x);
-                if name.size().y > 90.0 || name.size().x > 981.0 - name_x {
-                    error = Some("İsim karta sığmıyor. Görünen ismi kısalt.".into());
-                    return;
-                }
+                let area_x = if draft.show_avatar { 640.0 } else { 100.0 };
+                let area_width =
+                    width as f32 - area_x - if draft.show_avatar { 40.0 } else { 100.0 };
+                let author = format!("- {}", draft.author.trim());
+                let mut size: f32 = 42.0;
+                let (galley, placements, name, name_placements) = loop {
+                    let (galley, placements) =
+                        layout(ui, &draft.text, size, foreground, area_width, false);
+                    let (name, name_placements) = layout(
+                        ui,
+                        &author,
+                        (size * 0.6).max(22.0),
+                        foreground,
+                        area_width,
+                        true,
+                    );
+                    if galley.size().y + 60.0 + name.size().y <= height as f32 - 120.0
+                        && galley.size().x <= area_width + 1.0
+                        && name.size().x <= area_width + 1.0
+                    {
+                        break (galley, placements, name, name_placements);
+                    }
+                    size -= 2.0;
+                    if size < 18.0 {
+                        error = Some(
+                            "Metin bu karta okunaklı sığmıyor. Metni kısalt veya dikey boyutu seç."
+                                .into(),
+                        );
+                        return;
+                    }
+                };
+                let top = (height as f32 - galley.size().y - 60.0 - name.size().y) / 2.0;
+                let author_y = top + galley.size().y + 60.0;
                 paint_text(
                     ui,
                     &self.emoji,
-                    name,
+                    galley.clone(),
                     &placements,
-                    pos2(name_x, author_y),
+                    pos2(area_x + (area_width - galley.size().x) / 2.0, top),
+                    foreground,
+                    &mut held,
+                );
+                paint_text(
+                    ui,
+                    &self.emoji,
+                    name.clone(),
+                    &name_placements,
+                    pos2(area_x + (area_width - name.size().x) / 2.0, author_y),
                     foreground,
                     &mut held,
                 );
@@ -358,9 +377,9 @@ impl Renderer {
             }
         }
         let mut image = DecodedImage {
-            width: 1080,
+            width,
             height,
-            bytes: vec![0; 1080 * height * 4],
+            bytes: vec![0; width * height * 4],
         };
         let free = std::mem::take(&mut output.textures_delta.free);
         output.textures_delta.clear();
@@ -390,17 +409,16 @@ fn layout(
     size: f32,
     color: Color32,
     width: f32,
+    italic: bool,
 ) -> (Arc<egui::Galley>, Vec<String>) {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = width;
+    job.halign = egui::Align::Center;
     let mut placements = Vec::new();
-    crate::emoji::append(
-        ui,
-        &mut job,
-        &mut placements,
-        text,
-        &egui::TextFormat::simple(egui::FontId::proportional(size), color),
-    );
+    let mut format = egui::TextFormat::simple(egui::FontId::proportional(size), color);
+    format.italics = italic;
+    format.line_height = Some(size * 1.25);
+    crate::emoji::append(ui, &mut job, &mut placements, text, &format);
     (crate::bidi::layout_job(ui, job), placements)
 }
 
@@ -413,6 +431,7 @@ fn paint_text(
     color: Color32,
     held: &mut Vec<egui::TextureHandle>,
 ) {
+    let origin = origin - galley.rect.min.to_vec2();
     ui.painter().galley(origin, galley.clone(), color);
     for (rect, cluster) in fastframe_emoji::placeholder_rects(&galley).zip(placements) {
         let rect = rect.translate(origin.to_vec2());
@@ -555,7 +574,7 @@ mod tests {
     #[test]
     fn quote_card_is_opaque_and_contains_text_and_colour_emoji() {
         let image = Renderer::new().render(&draft()).unwrap();
-        assert_eq!((image.width, image.height), (1080, 1080));
+        assert_eq!((image.width, image.height), (1200, 600));
         assert!(
             image.bytes.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
             "the card must fill the export canvas"
@@ -566,7 +585,7 @@ mod tests {
             .0
             .iter()
             .enumerate()
-            .filter(|(i, _)| (250..800).contains(&(i / 1080)))
+            .filter(|(i, _)| (0..600).contains(&(i / 1200)))
             .collect::<Vec<_>>();
         assert!(
             center
@@ -587,8 +606,8 @@ mod tests {
             image::save_buffer_with_format(
                 std::path::Path::new(&directory).join("quote-dark.png"),
                 &image.bytes,
-                1080,
-                1080,
+                1200,
+                600,
                 image::ColorType::Rgba8,
                 image::ImageFormat::Png,
             )
@@ -603,8 +622,8 @@ mod tests {
         draft.portrait = true;
         let mut renderer = Renderer::new();
         let image = renderer.render(&draft).unwrap();
-        assert_eq!((image.width, image.height), (1080, 1350));
-        assert_eq!(&image.bytes[..4], &[246, 243, 235, 255]);
+        assert_eq!((image.width, image.height), (1200, 1350));
+        assert_eq!(&image.bytes[..4], &[255, 255, 255, 255]);
         draft.show_avatar = false;
         assert_ne!(image, renderer.render(&draft).unwrap());
         if let Ok(directory) = std::env::var("ZAPFAST_QUOTE_QA") {
@@ -612,7 +631,7 @@ mod tests {
             image::save_buffer_with_format(
                 std::path::Path::new(&directory).join("quote-light.png"),
                 &image.bytes,
-                1080,
+                1200,
                 1350,
                 image::ColorType::Rgba8,
                 image::ImageFormat::Png,
@@ -636,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_avatar_is_cropped_and_clipped_to_a_circle() {
+    fn quote_avatar_fills_left_panel_and_fades_into_background() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("avatar.png");
         image::RgbaImage::from_pixel(90, 60, image::Rgba([220, 20, 40, 255]))
@@ -645,9 +664,18 @@ mod tests {
         let mut draft = draft();
         draft.avatar = Some(path);
         let image = Renderer::new().render(&draft).unwrap();
-        let at = |x: usize, y: usize| &image.bytes[(y * 1080 + x) * 4..(y * 1080 + x) * 4 + 4];
-        assert_eq!(at(136, 946), &[220, 20, 40, 255]);
-        assert_eq!(at(100, 910), &[21, 23, 29, 255]);
+        let at = |x: usize, y: usize| &image.bytes[(y * 1200 + x) * 4..(y * 1200 + x) * 4 + 4];
+        assert_eq!(at(100, 40), &[220, 20, 40, 255]);
+        assert!((105..=115).contains(&at(400, 40)[0]));
+        assert!(at(598, 40)[0] < 3);
+        assert_eq!(at(610, 40), &[0, 0, 0, 255]);
+        assert!(
+            (0..600).all(|y| (0..640).all(|x| {
+                let pixel = at(x, y);
+                !(pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200)
+            })),
+            "quote and author text must remain in the right panel"
+        );
     }
 
     #[test]

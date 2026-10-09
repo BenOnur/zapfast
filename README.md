@@ -52,7 +52,10 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   why in its log.
 - **Quote cards.** Right-click a text message or media caption and choose
   **Quote** to edit its text and author in a local card with a live preview.
-  Choose dark/light, square/portrait, and avatar visibility. Save a PNG, copy
+  The default 1200×600 layout uses
+  a large portrait fading into the background on the left and centered
+  quote text on the right, with the bundled M PLUS Rounded 1c Light font.
+  Choose dark/light, landscape/portrait, and avatar visibility. Save a PNG, copy
   the image, or stage it as an attachment without sending it or changing the
   original message. Cards are generated locally, with no external service.
 - **Chats.** See pinned, unread, muted, and archived chats, typing indicators,

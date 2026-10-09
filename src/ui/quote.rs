@@ -88,8 +88,8 @@ fn controls(editor: &mut crate::quote::Editor, ui: &mut egui::Ui) {
         ui.selectable_value(&mut editor.draft.dark, false, "Açık");
     });
     ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(&mut editor.draft.portrait, false, "Kare · 1080×1080");
-        ui.selectable_value(&mut editor.draft.portrait, true, "Dikey · 1080×1350");
+        ui.selectable_value(&mut editor.draft.portrait, false, "Discord · 1200×600");
+        ui.selectable_value(&mut editor.draft.portrait, true, "Dikey · 1200×1350");
     });
     if ui.button("Orijinale dön").clicked() {
         editor.draft = editor.original.clone();
