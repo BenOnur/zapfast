@@ -364,6 +364,9 @@ See **[zapfast.rocks](https://zapfast.rocks)** for downloads and guides.
   send any of your packs as one.
   Turn any picture into a sticker: crop it square, keep its transparent
   background, and tag it with emojis.
+  Picker sticker downloads share a two-request limit. Sticker uploads that WhatsApp
+  rate-limits retry after 30 and 60 seconds, pausing background sticker downloads.
+  Repeated clicks on the same sticker while its upload is pending are ignored.
   Animated packs remain animated. Packs are stored as WebP files on your
   computer.
 - **Consistent names.** Names from your address book come first, as on the

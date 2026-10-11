@@ -595,6 +595,17 @@ pub enum Command {
         id: String,
         error: Option<String>,
     },
+    /// Internal: refill picker downloads after a completed file.
+    PumpStickerDownloads,
+    /// Internal: an outgoing sticker upload was rate-limited.
+    StickerUploadLimited {
+        delay: std::time::Duration,
+    },
+    /// Internal: preparation ended, releasing repeated-click protection.
+    StickerSendFinished {
+        chat: ChatId,
+        path: PathBuf,
+    },
     /// Internal attachment-download result.
     Downloaded {
         card: Option<usize>,

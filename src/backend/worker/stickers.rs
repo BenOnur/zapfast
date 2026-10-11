@@ -822,13 +822,13 @@ impl Worker {
 
     /// Starts the next favorites in line, unless the server asked to wait.
     pub(super) fn pump_favorite_stickers(&mut self) {
-        if self.client.is_none() || self.sticker_pace.is_empty() {
+        if self.client.is_none() || self.sticker_pace.is_empty() || !self.sticker_sends.is_empty() {
             return;
         }
-        for hash in self
-            .sticker_pace
-            .take(Instant::now(), self.favorite_fetches.len())
-        {
+        for hash in self.sticker_pace.take(
+            Instant::now(),
+            self.favorite_fetches.len() + self.sticker_fetches.len() + self.sticker_downloads.len(),
+        ) {
             self.fetch_favorite(hash);
         }
     }

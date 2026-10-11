@@ -47,6 +47,7 @@ mod link_watch;
 mod poll_history;
 mod polls;
 mod sticker_pace;
+mod sticker_send;
 mod stickers;
 
 use super::{Command, Event, GroupEdit, LinkStatus, Refusal, Unsent, Waker, read_sync::ReadSync};
@@ -522,6 +523,8 @@ pub async fn run(
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
         sticker_downloads: HashSet::new(),
+        sticker_sends: HashSet::new(),
+        sticker_download_failed: HashSet::new(),
         recent_hashes: HashMap::new(),
         emoji_cache: HashMap::new(),
         favorite_fetches: HashSet::new(),
@@ -799,6 +802,10 @@ struct Worker {
     sticker_fetches: HashSet<String>,
     /// Active chat-sticker downloads by chat and message id.
     sticker_downloads: HashSet<(ChatId, String)>,
+    /// Repeated clicks cannot prepare the same sticker concurrently.
+    sticker_sends: HashSet<(ChatId, PathBuf)>,
+    /// Archived picker downloads that failed on this connection.
+    sticker_download_failed: HashSet<(ChatId, String)>,
     /// Content hashes of the stickers last listed in Recent, by file.
     recent_hashes: HashMap<PathBuf, String>,
     /// Sticker emojis by file, with the size and time they were read at.
@@ -2259,6 +2266,7 @@ impl Worker {
                 self.set_status(LinkStatus::Connected);
                 // A new connection may reach a phone that was away before.
                 self.older_warned.clear();
+                self.sticker_download_failed.clear();
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
                 self.pump_read_sync();
@@ -5693,6 +5701,20 @@ impl Worker {
                 id,
                 result,
             } => self.downloaded(chat, id, card, result),
+            Command::StickerUploadLimited { delay } => {
+                self.sticker_pace.pause_for(Instant::now(), delay);
+                log::warn!(
+                    "sticker upload rate limited; pausing sticker downloads for {} seconds",
+                    delay.as_secs()
+                );
+                if delay.as_secs() < 120 {
+                    self.emit(Event::Info(format!("WhatsApp is temporarily limiting sticker uploads. Retrying automatically in {} seconds; you do not need to send it again.", delay.as_secs())));
+                }
+            }
+            Command::StickerSendFinished { chat, path } => {
+                self.sticker_sends.remove(&(chat, path));
+            }
+            Command::PumpStickerDownloads => self.fetch_missing_stickers(),
             Command::AvatarFetched { id, full, path } => {
                 self.emit(Event::Avatar { id, full, path })
             }
@@ -6718,6 +6740,14 @@ impl Worker {
         }
         self.downloads.remove(&(chat.clone(), id.clone(), card));
         let for_picker = self.sticker_downloads.remove(&(chat.clone(), id.clone()));
+        if for_picker && let Err(error) = &result {
+            if sticker_pace::rate_limited(error) {
+                self.sticker_pace.limited(Instant::now());
+            } else {
+                self.sticker_download_failed
+                    .insert((chat.clone(), id.clone()));
+            }
+        }
         self.emit(Event::Media {
             card,
             chat,
@@ -6729,6 +6759,11 @@ impl Worker {
         if for_picker && self.sticker_downloads.is_empty() {
             self.emit_stickers();
         }
+        if for_picker {
+            // Local refusals also complete synchronously through this method;
+            // queue the refill so a run of unavailable files cannot recurse.
+            let _ = self.commands.send(Command::PumpStickerDownloads);
+        }
     }
 
     /// Downloads missing recent and archived stickers for the picker.
@@ -6738,7 +6773,7 @@ impl Worker {
         };
         // A few at a time, and none while the server asked to wait: each
         // arrival starts the next (#298).
-        if !self.sticker_pace.open(Instant::now()) {
+        if !self.sticker_sends.is_empty() || !self.sticker_pace.open(Instant::now()) {
             return;
         }
         let phone = match self.archive.phone_stickers() {
@@ -6750,7 +6785,11 @@ impl Worker {
         };
         let dir = self.dirs.sticker_cache_dir();
         for sticker in phone.into_iter().filter(|sticker| sticker.path.is_none()) {
-            if self.sticker_fetches.len() >= sticker_pace::IN_FLIGHT {
+            if self.sticker_fetches.len()
+                + self.sticker_downloads.len()
+                + self.favorite_fetches.len()
+                >= sticker_pace::IN_FLIGHT
+            {
                 break;
             }
             if self.sticker_failed.contains(&sticker.hash)
@@ -6782,9 +6821,24 @@ impl Worker {
                 let _ = commands.send(Command::StickerFetched { hash, result });
             });
         }
-        match self.archive.stickers_without_file(STICKER_FETCH_LIMIT) {
+        match self.archive.stickers_without_file(
+            STICKER_FETCH_LIMIT.saturating_add(self.sticker_download_failed.len()),
+        ) {
             Ok(list) => {
                 for (chat, id) in list {
+                    if self.sticker_fetches.len()
+                        + self.sticker_downloads.len()
+                        + self.favorite_fetches.len()
+                        >= sticker_pace::IN_FLIGHT
+                    {
+                        break;
+                    }
+                    if self
+                        .sticker_download_failed
+                        .contains(&(chat.clone(), id.clone()))
+                    {
+                        continue;
+                    }
                     if self.sticker_downloads.insert((chat.clone(), id.clone())) {
                         self.download(chat, id);
                     }
@@ -7366,6 +7420,9 @@ impl Worker {
     }
 
     fn send_sticker(&mut self, chat: ChatId, path: PathBuf, quoting: Option<String>) {
+        if self.sticker_sends.contains(&(chat.clone(), path.clone())) {
+            return;
+        }
         let quote = match self.quote(&chat, quoting.as_deref()) {
             Ok(quote) => quote,
             Err(reason) => {
@@ -7380,15 +7437,32 @@ impl Worker {
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
+        self.sticker_sends.insert((chat.clone(), path.clone()));
         tokio::spawn(async move {
             let outcome = async {
                 let bytes = tokio::fs::read(&path)
                     .await
                     .map_err(|error| error.to_string())?;
-                let prepared = prepare_sticker(&client, bytes).await?;
+                let prepared = sticker_send::prepare_with_retry(
+                    || async {
+                        if !client.is_connected() {
+                            return Err("Not connected to WhatsApp".to_owned());
+                        }
+                        prepare_sticker(&client, bytes.clone()).await
+                    },
+                    |delay| {
+                        let _ = commands.send(Command::StickerUploadLimited { delay });
+                    },
+                    tokio::time::sleep,
+                )
+                .await?;
                 quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
             }
             .await;
+            let _ = commands.send(Command::StickerSendFinished {
+                chat: chat.clone(),
+                path,
+            });
             match outcome {
                 Ok((row, raw)) => {
                     let _ = commands.send(Command::Outbound {
@@ -11388,6 +11462,75 @@ mod receipt_tests {
         assert_eq!((decoded.width(), decoded.height()), (200, 200));
     }
 
+    #[test]
+    fn repeated_sticker_click_is_ignored_while_preparing() {
+        let (mut worker, events, _, _) = worker();
+        let chat = "1@s.whatsapp.net".to_owned();
+        let path = PathBuf::from("synthetic.webp");
+        worker.sticker_sends.insert((chat.clone(), path.clone()));
+        worker.send_sticker(chat, path, None);
+        assert_eq!(worker.sticker_sends.len(), 1);
+        assert!(
+            events.try_iter().next().is_none(),
+            "no second send or offline error"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_rate_limit_pauses_downloads_and_completion_releases_the_click() {
+        let (mut worker, events, _, _) = worker();
+        let chat = "1@s.whatsapp.net".to_owned();
+        let path = PathBuf::from("synthetic.webp");
+        worker.sticker_sends.insert((chat.clone(), path.clone()));
+        worker
+            .handle_command(Command::StickerUploadLimited {
+                delay: Duration::from_secs(30),
+            })
+            .await;
+        assert!(
+            !worker
+                .sticker_pace
+                .open(Instant::now() + Duration::from_secs(29))
+        );
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::Info(text) if text.contains("automatically")))
+        );
+        worker
+            .handle_command(Command::StickerSendFinished { chat, path })
+            .await;
+        assert!(worker.sticker_sends.is_empty());
+    }
+
+    #[test]
+    fn archived_picker_rate_limit_pauses_other_sticker_requests() {
+        let (mut worker, _, mut inbox, _) = worker();
+        let chat = "1@s.whatsapp.net".to_owned();
+        let id = "synthetic".to_owned();
+        worker.sticker_downloads.insert((chat.clone(), id.clone()));
+        worker.downloaded(
+            chat,
+            id,
+            None,
+            Err("received a server error response: code=429 text=rate-overlimit".to_owned()),
+        );
+        assert!(
+            !worker
+                .sticker_pace
+                .open(Instant::now() + Duration::from_secs(29))
+        );
+        assert!(worker.sticker_downloads.is_empty());
+        assert!(
+            worker.sticker_download_failed.is_empty(),
+            "rate limiting is temporary"
+        );
+        assert!(matches!(
+            inbox.try_recv(),
+            Ok(Command::PumpStickerDownloads)
+        ));
+    }
+
     /// Creates a test worker with an in-memory archive and open channels.
     #[test]
     fn group_questions_wait_in_line() {
@@ -11581,6 +11724,8 @@ mod receipt_tests {
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
             sticker_downloads: HashSet::new(),
+            sticker_sends: HashSet::new(),
+            sticker_download_failed: HashSet::new(),
             recent_hashes: HashMap::new(),
             emoji_cache: HashMap::new(),
             favorite_fetches: HashSet::new(),
