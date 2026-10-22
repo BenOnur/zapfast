@@ -8,6 +8,7 @@ Clean upstream ZapFast with local file plugins. Auto Responder, Anti-Delete, Quo
 ## Fixed
 
 * **Existing rules and retained messages stay readable.** Account settings and the previous deleted-message format are supported.
+* **TLS trust fixes.** Updated rustls-webpki to 0.103.16 and webpki-roots to 1.0.10 for [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382) and [RUSTSEC-2026-0383](https://rustsec.org/advisories/RUSTSEC-2026-0383).
 
 ## Limits
 
