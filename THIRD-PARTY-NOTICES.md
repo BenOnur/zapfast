@@ -1,5 +1,9 @@
 # Third-party notices
 
+## Rounded M+ card font
+
+`assets/fonts/MPLUSRounded1c-Light.ttf` is Copyright 2016 The Rounded M+ Project Authors, distributed under SIL Open Font License 1.1. The complete license is in `assets/fonts/MPLUSRounded1c-OFL.txt` and included in plugin release packages.
+
 ## Pidgin notification sounds
 
 `assets/sounds/receive.wav` and `assets/sounds/alert.wav`, built into ZapFast,

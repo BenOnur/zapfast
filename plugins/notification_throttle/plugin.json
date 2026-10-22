@@ -1,0 +1,18 @@
+{
+  "api_version": 1,
+  "id": "notification_throttle",
+  "name": "Bildirim Aralığı",
+  "description": "Aynı kişiden 30 saniye içinde gelen mesajlar için tek bildirim gösterir.",
+  "default_enabled": true,
+  "hooks": [
+    "on_notification"
+  ],
+  "settings": {
+    "interval_seconds": 30
+  },
+  "ui": {
+    "labels": {
+      "interval_seconds": "Aynı kişiden bildirim aralığı (saniye)"
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Stroke, Vec2, pos2, vec2};
+use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::i18n::Locale;
@@ -212,11 +212,27 @@ impl Section {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    if theme::macos_chrome(ui.ctx()) {
+    if theme::chrome_in_headers(ui.ctx()) {
         super::banner(app, ui);
     }
     let palette = app.palette;
     let locale = app.locale;
+    // The caption buttons ZapFast draws, beside the column's title row when
+    // it reaches the top-right corner, or above it when the window is narrow.
+    // Measured where the row stands unscrolled, so scrolling moves it away.
+    let page = ui.max_rect();
+    let column_width = (page.width() - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
+    let room = super::caption_room(
+        ui.ctx(),
+        Rect::from_min_size(
+            pos2(
+                page.center().x - column_width / 2.0,
+                page.top() + TOP_MARGIN,
+            ),
+            vec2(column_width, 32.0),
+        ),
+        TITLE_MIN_CONTENT,
+    );
     egui::ScrollArea::vertical()
         .id_salt("settings")
         .auto_shrink([false, false])
@@ -237,7 +253,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
                     ui.set_width(width);
+                    ui.add_space(room.top);
                     ui.horizontal(|ui| {
+                        ui.add_space(room.left);
                         if theme::icon_button(
                             ui,
                             Icon::ArrowLeft,
@@ -287,6 +305,9 @@ const COLUMN_WIDTH: f32 = 640.0;
 const SIDE_MARGIN: f32 = 32.0;
 /// Space above and below the settings column.
 const TOP_MARGIN: f32 = 24.0;
+/// What the title row needs beside the caption buttons ZapFast draws: Back
+/// and the title.
+const TITLE_MIN_CONTENT: f32 = 220.0;
 
 /// Where the settings column was laid out, for layout tests.
 pub fn column_id() -> egui::Id {
@@ -394,6 +415,17 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
     appearance.row(translated(locale, "Language"), "", language_picker);
+    // macOS keeps its own traffic lights over ZapFast's headers.
+    if cfg!(any(windows, target_os = "linux")) {
+        appearance.row(
+            translated(locale, "Custom title bar"),
+            translated(
+                locale,
+                "Draw ZapFast's own title bar and window buttons instead of the desktop's.",
+            ),
+            custom_titlebar_switch,
+        );
+    }
 
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
@@ -409,6 +441,14 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.auto_download,
     );
+    chats.account_toggle(
+        translated(locale, "Fetch older history"),
+        translated(
+            locale,
+            "Asks your phone in the background for older messages in the open, pinned and ten most recent chats.",
+        ),
+        |settings| &mut settings.history_prefetch,
+    );
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
         chats.toggle(
@@ -417,6 +457,30 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.pause_other_media,
         );
     }
+    chats.row(
+        translated(locale, "Keep chats archived"),
+        translated(
+            locale,
+            "When off, a new message brings an archived chat back to the list.",
+        ),
+        move |ui, app| {
+            let mut keep = app.settings.keep_chats_archived;
+            let response = widgets::switch(ui, &palette, &mut keep);
+            theme::reveal_focus(&response);
+            let label = crate::i18n::gettext(app.locale, "Keep chats archived");
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    keep,
+                    label.as_ref(),
+                )
+            });
+            if response.changed() {
+                app.actions.push(Action::SetKeepChatsArchived(keep));
+            }
+        },
+    );
     chats.row(
         translated(locale, "Locked chats code"),
         translated(
@@ -452,72 +516,6 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
-    let mut plugins_section = Section::new(translated(locale, "Plugins"));
-    plugins_section.row(
-        translated(locale, "Quoter"),
-        translated(
-            locale,
-            "Mesaj sağ tık menüsünden Equicord tarzı yüksek çözünürlüklü alıntı kartları üretir.",
-        ),
-        |ui, app| {
-            let mut enabled = app.plugins.is_enabled("quoter");
-            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
-                app.actions.push(Action::SetPluginEnabled {
-                    id: "quoter".to_string(),
-                    enabled,
-                });
-            }
-        },
-    );
-    plugins_section.row(
-        translated(locale, "Anti-Delete"),
-        translated(
-            locale,
-            "Karşı tarafın sildiği mesajları ve medyayı yerel arşivde tutar ve oynatır.",
-        ),
-        |ui, app| {
-            let mut enabled = app.plugins.is_enabled("anti_delete");
-            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
-                app.actions.push(Action::SetPluginEnabled {
-                    id: "anti_delete".to_string(),
-                    enabled,
-                });
-            }
-        },
-    );
-    plugins_section.row(
-        translated(locale, "Auto Responder"),
-        translated(
-            locale,
-            "Seçili sohbetlerde gelen komutlara (/komut) 1 saniye gecikmeyle otomatik yanıt gönderir.",
-        ),
-        |ui, app| {
-            let mut enabled = app.plugins.is_enabled("auto_reply");
-            if widgets::switch(ui, &app.palette, &mut enabled).changed() {
-                app.actions.push(Action::SetPluginEnabled {
-                    id: "auto_reply".to_string(),
-                    enabled,
-                });
-            }
-        },
-    );
-    plugins_section.block(
-        vec![
-            translated(locale, "Commands and replies"),
-            translated(locale, "Automatic replies"),
-        ],
-        |ui, app| {
-            if app.plugins.is_enabled("auto_reply") {
-                auto_reply_editor(ui, app);
-            } else {
-                ui.label(crate::i18n::gettext(
-                    app.locale,
-                    "Auto Responder eklentisi devre dışı.",
-                ));
-            }
-        },
-    );
-
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
         translated(locale, "Desktop notifications"),
@@ -529,7 +527,41 @@ fn sections(app: &App) -> Vec<Section> {
     );
     if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
+        notifications.toggle(
+            translated(locale, "Show message content in notifications"),
+            translated(locale, "When off, they say only “New message”."),
+            |settings| &mut settings.notification_content,
+        );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
+        notifications.row(
+            translated(locale, "Limit repeat notifications"),
+            translated(
+                locale,
+                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this. In groups, mentions and replies to you still notify.",
+            ),
+            |ui, app| {
+                let palette = app.palette;
+                let locale = app.locale;
+                let selected = app.account().settings.limit_notifications;
+                let response = egui::ComboBox::from_id_salt("limit_notifications")
+                    .selected_text(selected.label(locale))
+                    .width(200.0_f32.min(ui.available_width()))
+                    .show_ui(ui, |ui| {
+                        for limit in crate::settings::NotificationLimit::ALL {
+                            if theme_option(
+                                ui,
+                                &palette,
+                                limit.label(locale).as_ref(),
+                                limit == selected,
+                            ) {
+                                app.account_mut().settings.limit_notifications = limit;
+                                app.account_mut().mark_settings_dirty();
+                            }
+                        }
+                    });
+                theme::reveal_focus(&response.response);
+            },
+        );
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),
             translated(
@@ -803,6 +835,18 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    files.block(
+        vec![
+            translated(locale, "Storage used"),
+            translated(locale, "Media cache"),
+            translated(locale, "Images"),
+            translated(locale, "Videos and GIFs"),
+            translated(locale, "Stickers"),
+            translated(locale, "Other"),
+            translated(locale, "Clear…"),
+        ],
+        storage_usage,
+    );
     let log = app.dirs.log_file();
     files.row(
         translated(locale, "Log"),
@@ -832,129 +876,21 @@ fn sections(app: &App) -> Vec<Section> {
         |ui, app| about(app, ui),
     );
 
+    let mut plugins = Section::new("Plugins".into());
+    plugins.block(vec!["Eklentiler".into()], |ui, app| {
+        crate::plugins::settings(app, ui)
+    });
     vec![
         appearance,
         chats,
-        plugins_section,
         notifications,
         privacy,
         system,
         account_section,
         files,
+        plugins,
         about_section,
     ]
-}
-
-pub fn render_auto_reply_plugin_editor(ui: &mut egui::Ui, app: &mut App) {
-    auto_reply_editor(ui, app);
-}
-
-fn auto_reply_editor(ui: &mut egui::Ui, app: &mut App) {
-    use crate::i18n::gettext;
-    let locale = app.locale;
-    let mut rules = app.account().settings.auto_reply_rules.clone();
-    let mut changed = false;
-    let mut remove = None;
-    ui.label(gettext(
-        locale,
-        "Commands must start with / and match the whole message. First matching rule wins.",
-    ));
-    for (index, rule) in rules.iter_mut().enumerate() {
-        ui.push_id(("auto-reply-rule", index), |ui| {
-            ui.horizontal(|ui| {
-                changed |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut rule.command)
-                            .hint_text("/merhaba")
-                            .desired_width((ui.available_width() - 80.0).max(80.0)),
-                    )
-                    .changed();
-                if ui.small_button(gettext(locale, "Remove")).clicked() {
-                    remove = Some(index);
-                }
-            });
-            changed |= ui
-                .add(
-                    egui::TextEdit::multiline(&mut rule.reply)
-                        .hint_text(gettext(locale, "Reply text"))
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY),
-                )
-                .changed();
-            ui.add_space(8.0);
-        });
-    }
-    if let Some(index) = remove {
-        rules.remove(index);
-        changed = true;
-    }
-    if ui.button(gettext(locale, "Add command")).clicked() {
-        rules.push(Default::default());
-        changed = true;
-    }
-    ui.label(format!(
-        "{}: {}",
-        gettext(locale, "Selected chats"),
-        app.account().settings.auto_reply_chats.len()
-    ));
-    if changed {
-        app.actions.push(Action::SetAutoReplyRules(rules));
-    }
-    ui.add_space(8.0);
-    if app.account().settings.auto_reply_chats.is_empty() {
-        ui.label(gettext(
-            locale,
-            "No chats selected: automatic replies will not be sent.",
-        ));
-    }
-    let filter_id = egui::Id::new("auto-reply-chat-search");
-    let mut search: String = ui.data_mut(|d| d.get_temp(filter_id).unwrap_or_default());
-    ui.add(
-        egui::TextEdit::singleline(&mut search)
-            .hint_text(gettext(locale, "Search friends and groups")),
-    );
-    ui.data_mut(|d| d.insert_temp(filter_id, search.clone()));
-    let needle = crate::util::search_key(&search);
-    let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("auto-reply-chat-choices")
-        .max_height(180.0)
-        .show(ui, |ui| {
-            for chat in app
-                .chats
-                .iter()
-                .filter(|chat| chat.can_send() && !chat.is_channel())
-            {
-                let title = app.chat_title(chat);
-                if !crate::util::search_key(&title).contains(&needle) {
-                    continue;
-                }
-                let label = if chat.is_group() {
-                    format!("{} ({})", title, gettext(locale, "Group"))
-                } else {
-                    title
-                };
-                let mut selected = app.account().settings.auto_reply_chats.contains(&chat.id);
-                if ui
-                    .push_id(("auto-reply-chat", &chat.id), |ui| {
-                        ui.checkbox(&mut selected, label)
-                    })
-                    .inner
-                    .changed()
-                {
-                    actions.push(Action::SetAutoReplyChat(chat.id.clone(), selected));
-                }
-            }
-        });
-    app.actions.extend(actions);
-    ui.label(gettext(
-        locale,
-        if app.account().settings_save_failed {
-            "Settings could not be saved; changes will be retried."
-        } else {
-            "Changes are saved automatically."
-        },
-    ));
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form
@@ -1147,7 +1083,7 @@ fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
             .width(200.0_f32.min(ui.available_width()))
             .height(320.0)
             .show_ui(ui, |ui| {
-                for choice in ThemeChoice::ALL {
+                for &choice in ThemeChoice::ALL {
                     if theme_option(
                         ui,
                         &palette,
@@ -1274,7 +1210,7 @@ fn language_picker(ui: &mut egui::Ui, app: &mut App) {
 
 /// Wallpaper colour picker and live preview.
 pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
-    if theme::macos_chrome(ui.ctx()) {
+    if theme::chrome_in_headers(ui.ctx()) {
         super::banner(app, ui);
     }
     let palette = app.palette;
@@ -1507,6 +1443,138 @@ fn wallpaper_color_button(
         )
     });
     response.clicked()
+}
+
+/// The space this account's media cache takes, split by kind, with the
+/// button that empties it.
+fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let stats = app.storage_stats.unwrap_or_default();
+    let measured = app.storage_stats.is_some();
+    let total = stats.bytes_total();
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Storage used"),
+            theme::medium(14.0),
+            palette.text,
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let clearing = app.storage_clearing;
+            let label = crate::i18n::gettext(locale, "Clear…");
+            let clear = ui
+                .add_enabled_ui(measured && total > 0 && !clearing, |ui| {
+                    theme::soft_button(ui, &palette, Some(Icon::Trash), &label, false)
+                })
+                .inner;
+            if clear.clicked() {
+                let id = app.account().id.clone();
+                app.actions
+                    .push(Action::ShowDialog(Dialog::ConfirmClearMediaCache(id)));
+            }
+            // A reading that never arrived shows no size rather than zero.
+            if measured {
+                theme::text(
+                    ui,
+                    crate::util::bytes(total),
+                    theme::semibold(14.0),
+                    palette.text,
+                );
+            }
+        });
+    });
+    ui.add_space(2.0);
+    // Each number has a cache of its own: say whose this is.
+    let account = app.account().display_label(locale);
+    let hint = widgets::line(
+        ui,
+        &crate::i18n::gettext(
+            locale,
+            "Photos, videos, stickers and files {account} downloaded to this computer. Clearing them keeps your messages; attachments download again when you open them.",
+        )
+        .replace("{account}", &account),
+        theme::regular(12.5),
+        palette.secondary,
+        ui.available_width(),
+        usize::MAX,
+    );
+    let (rect, _) = ui.allocate_exact_size(hint.size(), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        hint.paint(ui, rect.min, palette.secondary);
+    }
+    if !measured {
+        return;
+    }
+    ui.add_space(10.0);
+    // Other only shows when there is something in it.
+    for (label, count, bytes, always) in [
+        (
+            crate::i18n::gettext(locale, "Images"),
+            stats.images,
+            stats.image_bytes,
+            true,
+        ),
+        (
+            crate::i18n::gettext(locale, "Videos and GIFs"),
+            stats.videos,
+            stats.video_bytes,
+            true,
+        ),
+        (
+            crate::i18n::gettext(locale, "Stickers"),
+            stats.stickers,
+            stats.sticker_bytes,
+            true,
+        ),
+        (
+            crate::i18n::gettext(locale, "Other"),
+            stats.other,
+            stats.other_bytes,
+            false,
+        ),
+    ] {
+        if always || count > 0 {
+            storage_bar_row(ui, &palette, &label, count, bytes, total);
+        }
+    }
+}
+
+/// One labelled bar: the kind, how many files and how much they weigh, and
+/// the share of the total they take.
+fn storage_bar_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    count: u64,
+    bytes: u64,
+    total: u64,
+) {
+    ui.horizontal(|ui| {
+        theme::text(ui, label, theme::medium(14.0), palette.text);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            theme::text(
+                ui,
+                format!("{count} · {}", crate::util::bytes(bytes)),
+                theme::regular(12.5),
+                palette.secondary,
+            );
+        });
+    });
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, rect.height() / 2.0, palette.outline);
+        let width = crate::model::StorageStats::bar_width(bytes, total, rect.width());
+        if width > 0.5 {
+            ui.painter().rect_filled(
+                Rect::from_min_size(rect.min, vec2(width, rect.height())),
+                rect.height() / 2.0,
+                palette.accent,
+            );
+        }
+    }
+    ui.add_space(8.0);
 }
 
 /// A titled group of settings on a rounded card.
@@ -1789,6 +1857,22 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
     if widgets::credit(ui, &palette, app.locale) {
         app.actions
             .push(Action::OpenUrl(widgets::AUTHOR_URL.to_owned()));
+    }
+}
+
+/// The Custom title bar switch. Turning it over replaces the window, so it
+/// goes through its action rather than straight into the settings.
+fn custom_titlebar_switch(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let label = crate::i18n::gettext(app.locale, "Custom title bar");
+    let mut value = app.settings.custom_titlebar;
+    let response = widgets::switch(ui, &palette, &mut value);
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), value, &label)
+    });
+    if response.changed() {
+        app.actions.push(Action::SetCustomTitlebar(value));
     }
 }
 

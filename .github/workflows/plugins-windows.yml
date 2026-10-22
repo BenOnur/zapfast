@@ -1,0 +1,75 @@
+name: Plugins Windows
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified Windows package
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Lint all features
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --locked --all-targets
+      - name: Tests all features
+        run: cargo test --locked --all-targets --all-features
+      - name: Documentation
+        run: cargo doc --locked --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Release executable
+        run: cargo build --locked --release
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          "PLUGIN_VERSION=$version" >> $env:GITHUB_ENV
+          $name = "zapfast-v$version-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          Copy-Item target/release/zapfast.exe, LICENSE, THIRD-PARTY-NOTICES.md "dist/$name/"
+          Copy-Item assets/fonts/MPLUSRounded1c-OFL.txt "dist/$name/"
+          Copy-Item packaging/zapfast-portable.txt "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          Remove-Item -LiteralPath "dist/$name" -Recurse
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: Sign and verify update manifest
+        uses: crmne/native-packages/.github/actions/sign-release@226fb48cb375c7cb309a3e642c7228a6e00e9ebf
+        with:
+          directory: dist
+          public-key: assets/plugin-update-public-key.hex
+          key-env: ZAPFAST_PLUGIN_UPDATE_SIGNING_KEY
+        env:
+          ZAPFAST_PLUGIN_UPDATE_SIGNING_KEY: ${{ secrets.ZAPFAST_PLUGIN_UPDATE_SIGNING_KEY }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zapfast-plugins-windows
+          path: dist/*
+      - name: Publish
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:GITHUB_REF_NAME -ne 'main') { throw 'Releases must use main' }
+          $assets = @(Get-ChildItem dist -File | Select-Object -ExpandProperty FullName)
+          gh release create "v$env:PLUGIN_VERSION" @assets --target $env:GITHUB_SHA --title "ZapFast $env:PLUGIN_VERSION Plugins" --notes-file packaging/plugin-release-notes.md --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

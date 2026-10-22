@@ -1,0 +1,37 @@
+{
+  "api_version": 2,
+  "id": "quoter",
+  "name": "Quoter",
+  "description": "Quoter · dosyadan yüklenir",
+  "default_enabled": true,
+  "hooks": [
+    "on_context_menu",
+    "on_card"
+  ],
+  "settings": {
+    "menu_label": "Quote",
+    "width": 1200,
+    "height": 600,
+    "background": "#000000",
+    "foreground": "#ffffff",
+    "font_size": 42,
+    "avatar_size": 600,
+    "text_x": 640,
+    "text_width": 520,
+    "gap": 60
+  },
+  "ui": {
+    "labels": {
+      "menu_label": "Menü adı",
+      "width": "Kart genişliği",
+      "height": "Kart yüksekliği",
+      "background": "Koyu kartın arka planı",
+      "foreground": "Koyu kartın yazı rengi",
+      "font_size": "Yazı boyutu",
+      "avatar_size": "Profil fotoğrafı boyutu",
+      "text_x": "Metnin yatay konumu",
+      "text_width": "Metin alanı genişliği",
+      "gap": "Metin ve isim arası boşluk"
+    }
+  }
+}

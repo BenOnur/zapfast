@@ -22,10 +22,9 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
         executable_names: &[],
         legacy_bundle_names: &["FastsApp.app"],
     },
-    publisher_key: Some(include_str!("../assets/update-public-key.hex")),
-    // The next release key, backed up outside GitHub. Releases stay signed
-    // with the current key until installs trust this one too.
-    additional_publisher_keys: &[include_str!("../assets/update-public-key-next.hex")],
+    publisher_key: Some(include_str!("../assets/plugin-update-public-key.hex")),
+    // This channel trusts only our plugin-build publisher, not stock binaries.
+    additional_publisher_keys: &[],
     ..UpdateConfig::new(
         "BenOnur/zapfast",
         "ZapFast",
@@ -53,6 +52,11 @@ mod tests {
         assert_eq!(CONFIG.current_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(CONFIG.slug, "zapfast");
         assert_eq!(CONFIG.repository, "BenOnur/zapfast");
+        assert!(CONFIG.additional_publisher_keys.is_empty());
+        assert_ne!(
+            CONFIG.publisher_key.unwrap().trim(),
+            include_str!("../assets/update-public-key.hex").trim()
+        );
     }
 
     #[test]

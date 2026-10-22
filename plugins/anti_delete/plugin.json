@@ -1,0 +1,21 @@
+{
+  "api_version": 2,
+  "id": "anti_delete",
+  "name": "Anti-Delete",
+  "description": "Anti-Delete · dosyadan yüklenir",
+  "default_enabled": true,
+  "hooks": [
+    "on_before_delete",
+    "on_cache_media"
+  ],
+  "settings": {
+    "retain": true,
+    "max_media_mib": 64
+  },
+  "ui": {
+    "labels": {
+      "retain": "Silinen mesajları sakla",
+      "max_media_mib": "Otomatik medya saklama sınırı (MiB)"
+    }
+  }
+}

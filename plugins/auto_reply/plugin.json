@@ -1,0 +1,35 @@
+{
+  "api_version": 2,
+  "id": "auto_reply",
+  "name": "Auto Responder",
+  "description": "Auto Responder · dosyadan yüklenir",
+  "default_enabled": true,
+  "hooks": [
+    "on_message"
+  ],
+  "settings": {
+    "enabled": false,
+    "chats": [],
+    "rules": [],
+    "delay_seconds": 1
+  },
+  "ui": {
+    "labels": {
+      "enabled": "Otomatik yanıt açık",
+      "chats": "Yanıt verilecek sohbetler",
+      "rules": "Komutlar",
+      "command": "Gelen komut",
+      "reply": "Gönderilecek yanıt",
+      "delay_seconds": "Bekleme süresi (saniye)"
+    },
+    "templates": {
+      "rules": {
+        "command": "/komut",
+        "reply": ""
+      }
+    },
+    "chat_fields": [
+      "chats"
+    ]
+  }
+}

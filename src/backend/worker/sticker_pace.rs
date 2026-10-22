@@ -2,13 +2,15 @@
 //! limit. Fetching every missing favorite at once on connecting (126 for one
 //! reader) answered `429 rate-overlimit` and left the account throttled, so
 //! the next picture or sticker the reader sent failed too (#298, #307).
+//! Opening the picker did the same with the chat stickers it fetches (#405).
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Favorites started per tick of the worker's five-second clock.
 const PER_TICK: usize = 2;
-/// Picker downloads across Recent, Favorites, and archived stickers combined.
+/// Favorite downloads, and picker downloads (recent and chat stickers
+/// together), allowed in flight at once.
 pub(super) const IN_FLIGHT: usize = 2;
 /// The first pause after the server says to slow down, doubled each time
 /// it says so again, up to [`LONGEST`].
@@ -61,17 +63,11 @@ impl Pace {
         } else {
             FIRST
         };
-        self.pause_for(now, self.pause);
+        self.until = Some(now + self.pause);
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.queue.is_empty()
-    }
-
-    /// Outgoing uploads share the quiet period with downloads.
-    pub(super) fn pause_for(&mut self, now: Instant, delay: Duration) {
-        let until = now + delay;
-        self.until = Some(self.until.map_or(until, |previous| previous.max(until)));
     }
 }
 
@@ -135,16 +131,5 @@ mod tests {
             "received a server error response: code=429, text='rate-overlimit'"
         ));
         assert!(!rate_limited("Download failed with status: 403"));
-    }
-
-    #[test]
-    fn uploads_cannot_shorten_a_download_cooldown() {
-        let mut pace = Pace::default();
-        let now = Instant::now();
-        pace.pause_for(now, Duration::from_secs(120));
-        pace.pause_for(now, Duration::from_secs(30));
-        pace.limited(now);
-        assert!(!pace.open(now + Duration::from_secs(119)));
-        assert!(pace.open(now + Duration::from_secs(120)));
     }
 }

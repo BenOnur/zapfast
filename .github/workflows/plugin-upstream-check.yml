@@ -1,0 +1,35 @@
+name: Plugin upstream compatibility
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 8 * * 1'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Preview the upstream integration
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/crmne/zapfast.git
+          git fetch --no-tags upstream main
+          git config user.name plugin-compatibility
+          git config user.email compatibility@localhost
+          echo 'Upstream integration preview, does not publish or modify main.' >> "$GITHUB_STEP_SUMMARY"
+          git log -1 --format='%H %s' upstream/main >> "$GITHUB_STEP_SUMMARY"
+          base=$(cat packaging/plugin-upstream-base.txt)
+          git diff --binary "$base" upstream/main > "$RUNNER_TEMP/upstream.patch"
+          if ! test -s "$RUNNER_TEMP/upstream.patch"; then
+            echo 'Already at the recorded upstream base.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! git apply --3way "$RUNNER_TEMP/upstream.patch"; then
+            echo 'Integration conflicts require adaptation before the next plugin release.' >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo 'No textual conflicts; a release still requires the full Windows checks.' >> "$GITHUB_STEP_SUMMARY"

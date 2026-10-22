@@ -86,6 +86,10 @@ impl AppDirs {
         }
     }
 
+    pub fn plugins_dir(&self) -> PathBuf {
+        self.config.join("plugins")
+    }
+
     pub fn settings_file(&self) -> PathBuf {
         self.config.join("settings.json")
     }
