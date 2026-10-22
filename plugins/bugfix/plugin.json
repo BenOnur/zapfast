@@ -1,0 +1,18 @@
+{
+  "api_version": 3,
+  "id": "bugfix",
+  "name": "bugfix",
+  "description": "Arayüz hata düzeltmeleri.",
+  "default_enabled": true,
+  "hooks": [
+    "on_layout"
+  ],
+  "settings": {
+    "header_title_width": true
+  },
+  "ui": {
+    "labels": {
+      "header_title_width": "Sohbet adı kullanılabilir alanı doldursun"
+    }
+  }
+}

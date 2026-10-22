@@ -201,7 +201,7 @@ impl ScriptPlugins {
     fn load(&self, directory: &Path, id: &str) -> Result<Script, ()> {
         let manifest: Manifest =
             serde_json::from_str(&read_small(&directory.join("plugin.json"))?).map_err(|_| ())?;
-        if !(1..=2).contains(&manifest.api_version)
+        if !(1..=3).contains(&manifest.api_version)
             || manifest.id != id
             || manifest.name.trim().is_empty()
             || manifest.name.len() > 128
@@ -216,6 +216,8 @@ impl ScriptPlugins {
                         | "on_cache_media"
                         | "on_context_menu"
                         | "on_card"
+                        | "on_composer_tools"
+                        | "on_layout"
                 )
             })
         {

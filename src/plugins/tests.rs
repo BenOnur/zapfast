@@ -207,3 +207,76 @@ fn generated_card_uses_the_script_scene_and_rejects_excessive_canvas() {
     draft.scene.as_mut().unwrap().width = 100000;
     assert!(renderer.render(&draft).is_err());
 }
+
+#[test]
+fn composer_shortcut_loads_and_tracks_disable_reload_and_removal() {
+    let (dir, mut h) = host();
+    assert!(h.composer_tools().is_empty());
+    let plugin = dir.path().join("quick_stickers");
+    std::fs::create_dir(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("plugin.json"),
+        include_str!("../../plugins/quick_stickers/plugin.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("main.rhai"),
+        include_str!("../../plugins/quick_stickers/main.rhai"),
+    )
+    .unwrap();
+    h.reload();
+    assert!(h.errors().is_empty(), "{:?}", h.errors());
+    let buttons = h.composer_tools();
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0].0, "quick_stickers");
+    assert_eq!(buttons[0].2, PickerTab::Stickers);
+    h.set_enabled("quick_stickers", false);
+    assert!(h.composer_tools().is_empty());
+    h.set_enabled("quick_stickers", true);
+    std::fs::write(
+        plugin.join("main.rhai"),
+        "fn on_composer_tools(e,s,c) { #{state:s,label:c.label,command: \"unknown\"} }",
+    )
+    .unwrap();
+    h.reload();
+    assert!(h.composer_tools().is_empty());
+    std::fs::remove_dir_all(plugin).unwrap();
+    h.reload();
+    assert!(h.composer_tools().is_empty());
+}
+
+#[test]
+fn bugfix_layout_uses_available_width_and_tracks_disable() {
+    let (dir, mut h) = host();
+    let plugin = dir.path().join("bugfix");
+    std::fs::create_dir(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("plugin.json"),
+        include_str!("../../plugins/bugfix/plugin.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("main.rhai"),
+        include_str!("../../plugins/bugfix/main.rhai"),
+    )
+    .unwrap();
+    h.reload();
+    assert!(h.errors().is_empty(), "{:?}", h.errors());
+    for available in [20.0, 120.0, 360.0, 640.0] {
+        assert_eq!(
+            h.layout_width("chat_header_title", available, 80.0),
+            available
+        );
+    }
+    assert_eq!(h.layout_width("other", 360.0, 80.0), 80.0);
+    h.set_enabled("bugfix", false);
+    assert_eq!(h.layout_width("chat_header_title", 360.0, 80.0), 80.0);
+    h.set_enabled("bugfix", true);
+    std::fs::write(
+        plugin.join("main.rhai"),
+        "fn on_layout(e,s,c) { #{state:s,width:99999.0} }",
+    )
+    .unwrap();
+    h.reload();
+    assert_eq!(h.layout_width("chat_header_title", 120.0, 80.0), 120.0);
+}

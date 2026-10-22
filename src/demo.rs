@@ -15405,6 +15405,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plugin_sticker_shortcut_sits_after_emoji_and_opens_stickers() {
+        use crate::ui::focus::{self, Stop};
+        let mut app = app();
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("quick_stickers");
+        std::fs::create_dir(&plugin).unwrap();
+        std::fs::write(
+            plugin.join("plugin.json"),
+            include_str!("../plugins/quick_stickers/plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("main.rhai"),
+            include_str!("../plugins/quick_stickers/main.rhai"),
+        )
+        .unwrap();
+        app.plugins = crate::plugins::Host::load(root.path(), &Default::default());
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let emoji = ctx
+            .read_response(focus::control(&ctx, Stop::Emoji).unwrap())
+            .unwrap()
+            .rect;
+        let button = ctx
+            .read_response(focus::control(&ctx, Stop::ComposerPlugin(0)).unwrap())
+            .unwrap()
+            .rect;
+        let attach = ctx
+            .read_response(focus::control(&ctx, Stop::Attach).unwrap())
+            .unwrap()
+            .rect;
+        // Existing composer pairs intentionally overlap hit boxes by four points.
+        assert!(button.center().x > emoji.center().x);
+        assert!(
+            ((button.center().x - emoji.center().x) - (emoji.center().x - attach.center().x)).abs()
+                < 1.0
+        );
+        assert!((button.center().y - emoji.center().y).abs() < 1.0);
+        let at = button.center();
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        render(&mut app, &ctx);
+        assert_eq!(app.picker, Some(crate::model::PickerTab::Stickers));
+        assert_eq!(app.picker_anchor, Some(button));
+        app.plugins.set_enabled("quick_stickers", false);
+        render(&mut app, &ctx);
+        assert!(focus::control(&ctx, Stop::ComposerPlugin(0)).is_none());
+    }
+
     /// A draft sits as far below the field's top as above its bottom: the
     /// span from the capitals' top to the descenders' bottom centres on the
     /// plus and emoji buttons at every scale. Centring the line box left

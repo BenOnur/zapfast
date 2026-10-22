@@ -1,0 +1,18 @@
+{
+  "api_version": 3,
+  "id": "quick_stickers",
+  "name": "Hızlı Çıkartmalar",
+  "description": "Emoji simgesinin hemen sağındaki düğmeyle doğrudan çıkartmaları açar.",
+  "default_enabled": true,
+  "hooks": [
+    "on_composer_tools"
+  ],
+  "settings": {
+    "label": "Çıkartmaları aç"
+  },
+  "ui": {
+    "labels": {
+      "label": "Düğme açıklaması"
+    }
+  }
+}

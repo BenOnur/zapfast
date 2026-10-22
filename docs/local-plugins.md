@@ -1,4 +1,4 @@
-# Local plugins, API v2
+# Local plugins, API v3
 
 This build follows upstream commit `bde5bfdc4fdf531d84b9aec32f134fd3f390152e` and adds a local Rhai host. It uses the normal upstream interface; previous private themes and interface changes are not carried forward.
 
@@ -6,7 +6,7 @@ Open **Settings > Plugins > Eklenti klasörünü aç**. Every plugin has its own
 
 The four seeded plugins are `notification_throttle`, `auto_reply`, `anti_delete`, and `quoter`. Seeding never overwrites existing files and respects removal after the first migration. Plugin switches, account-specific settings and files survive application updates. A reload cancels pending sends. Removing or disabling a plugin removes its menu entries and future behavior; retained archive data is not erased.
 
-The manifest declares `api_version` (1 or 2), `id` matching its folder, `name`, `description`, `default_enabled`, `hooks`, and `settings`. Optional `ui` metadata supplies field labels, list item templates and chat selectors for the generic settings editor. Account overrides merge into defaults. Previous `auto_reply_enabled`, `auto_reply_rules` and `auto_reply_chats` settings remain readable and editable without exporting chats.
+The manifest declares `api_version` (1, 2 or 3), `id` matching its folder, `name`, `description`, `default_enabled`, `hooks`, and `settings`. Optional `ui` metadata supplies field labels, list item templates and chat selectors for the generic settings editor. Account overrides merge into defaults. Previous `auto_reply_enabled`, `auto_reply_rules` and `auto_reply_chats` settings remain readable and editable without exporting chats.
 
 Every hook is `fn hook(event, state, config)` and returns a map with `state`. State is isolated by account and plugin, preserved across successful reloads and cleared at restart. The host provides no arbitrary filesystem, network, module import, blocking sleep, or evaluation API. Scripts run locally and are trusted to inspect the event fields exposed to their declared hooks.
 
@@ -32,3 +32,15 @@ Host limits: 32 plugins, 128 KiB per file, 25,000 operations per callback, bound
 This fork uses `BenOnur/zapfast` releases and `assets/plugin-update-public-key.hex`, not upstream's signing key. The private key belongs in the repository secret `ZAPFAST_PLUGIN_UPDATE_SIGNING_KEY` and outside the source checkout. **Plugins Windows** performs the required Windows checks, builds a portable zip, signs its checksums, verifies them and optionally publishes a release. No Rust compiler is needed on the receiving machine.
 
 **Plugin upstream compatibility** previews upstream integration weekly without changing main or publishing binaries. A clean textual merge is not proof of compatibility: adaptation and full checks still precede each release. Official stock exe updates omit this host. The installed exe should live outside Cargo target directories. Local cache or compiler removal is a separate operation; this feature does not delete them automatically.
+
+## Composer shortcuts (API v3)
+
+The optional `quick_stickers` plugin adds a sticker icon immediately to the right of emoji. Click it to open the Stickers tab directly; click again to close it. Enable or disable it in Settings > Plugins. Copy its folder into the plugin directory and reload. It requires a host supporting API v3; older hosts reject it explicitly.
+
+`on_composer_tools(event, state, config)` returns `state`, a nonempty `label` (up to 80 characters), and `command`: `open_stickers`, `open_emoji`, or `open_gifs`. The host draws up to four buttons with native icons, in plugin order, and uses the existing picker actions. This hook receives account/config context, without chat contents. Disabling or removing a plugin removes its button. The four existing seeded plugins are unchanged.
+
+## Layout fixes (API v3)
+
+The optional plugin is named `bugfix`, so further fixes can be added to the same folder. Its first setting, `header_title_width`, lets the chat name use all space left after reserving header buttons once. Turning it off restores the original width calculation.
+
+`on_layout(event, state, config)` receives `region`, `available_width`, and `default_width`; returns `state` and floating point `width`. The host currently exposes `chat_header_title`. Returned widths must be finite and are clamped to the parent allocation. The last valid enabled plugin wins. No chat text is provided. Adding more layout regions or capabilities requires a host update; changes within an exposed region reload from files.

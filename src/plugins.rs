@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use rhai::{Dynamic, Map};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Content, Message};
+use crate::model::{Content, Message, PickerTab};
 use crate::plugin_runtime::{ScriptPlugins, event};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +93,45 @@ impl Host {
             rhai::serde::to_dynamic(&self.overrides).unwrap_or_default(),
         );
         self.runtime.borrow_mut().values(hook, event, &self.enabled)
+    }
+    /// Bounded layout policy; plugins cannot enlarge the parent allocation.
+    pub fn layout_width(&self, region: &str, available: f32, fallback: f32) -> f32 {
+        let available = available.max(0.0);
+        let mut event = Map::new();
+        event.insert("region".into(), region.into());
+        event.insert("available_width".into(), (available as f64).into());
+        event.insert("default_width".into(), (fallback as f64).into());
+        self.call("on_layout", event)
+            .into_iter()
+            .filter_map(|(_, mut output)| {
+                let value = output.remove("width")?.as_float().ok()?;
+                value
+                    .is_finite()
+                    .then_some((value as f32).clamp(0.0, available))
+            })
+            .next_back()
+            .unwrap_or(fallback)
+    }
+    /// Declarative picker shortcuts, placed immediately after the emoji control.
+    pub fn composer_tools(&self) -> Vec<(String, String, PickerTab)> {
+        self.call("on_composer_tools", Map::new())
+            .into_iter()
+            .filter_map(|(id, mut output)| {
+                let command = output.remove("command")?.try_cast::<String>()?;
+                let tab = match command.as_str() {
+                    "open_stickers" => PickerTab::Stickers,
+                    "open_emoji" => PickerTab::Emoji,
+                    "open_gifs" => PickerTab::Gifs,
+                    _ => return None,
+                };
+                let label = output.remove("label")?.try_cast::<String>()?;
+                if label.trim().is_empty() || label.chars().count() > 80 {
+                    return None;
+                }
+                Some((id, label, tab))
+            })
+            .take(4)
+            .collect()
     }
     pub fn allow_notification(&self, account: &str, message: &Message, now: i64) -> bool {
         self.call(

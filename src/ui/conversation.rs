@@ -484,7 +484,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 // Room for the name's glass pill to clear the avatar.
                                 ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
-                                    let width = (ui.available_width() - right_controls).max(80.0);
+                                    let width = app.plugins.layout_width(
+                                        "chat_header_title",
+                                        ui.available_width(),
+                                        (ui.available_width() - right_controls).max(80.0),
+                                    );
                                     ui.set_max_width(width);
                                     // On glass the lines centre on the avatar: the
                                     // column starts at the row's top otherwise.
@@ -1581,6 +1585,27 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             app.actions.push(Action::SetComposerTools(false));
                         }
                         app.actions.push(Action::TogglePicker(PickerTab::Emoji));
+                    }
+                    for (index, (plugin_id, label, tab)) in app.plugins.composer_tools().into_iter().enumerate() {
+                        ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
+                        let icon = match tab {
+                            PickerTab::Emoji => Icon::Smile,
+                            PickerTab::Gifs => Icon::Gif,
+                            PickerTab::Stickers => Icon::Sticker,
+                        };
+                        let button = ui.push_id(("plugin-composer", plugin_id), |ui| {
+                            last_line(ui, line, |ui| theme::icon_button(
+                                ui, icon, 22.0,
+                                if app.picker == Some(tab) { palette.accent } else { palette.secondary },
+                                palette.text, &label,
+                            ))
+                        }).inner.tab_stop(Stop::ComposerPlugin(index as u8));
+                        if app.picker == Some(tab) || button.clicked() {
+                            app.picker_anchor = Some(button.rect);
+                        }
+                        if button.clicked() {
+                            app.actions.push(Action::TogglePicker(tab));
+                        }
                     }
                     // The text follows the pair as closely as the emoji
                     // follows the plus (the field's own left margin included).
