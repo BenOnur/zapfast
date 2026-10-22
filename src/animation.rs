@@ -117,6 +117,21 @@ pub enum Frame {
 /// A visible but paused animation returns its first frame without scheduling
 /// another repaint. This keeps animated media idle until playback is wanted.
 pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Frame {
+    frame_with_policy(ui, path, rect, animate, false)
+}
+
+/// Show the small poster before decoding all animation frames, even on hover.
+pub fn frame_poster_first(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Frame {
+    frame_with_policy(ui, path, rect, animate, true)
+}
+
+fn frame_with_policy(
+    ui: &egui::Ui,
+    path: &Path,
+    rect: egui::Rect,
+    animate: bool,
+    poster_first: bool,
+) -> Frame {
     // ScrollArea still lays out clipped rows. They must neither start decoders
     // nor keep the window repainting while their pixels are off screen.
     if !ui.is_rect_visible(rect) {
@@ -269,7 +284,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
         }
         Some(Entry::Decoding) => Frame::Pending,
         Some(Entry::Failed) => Frame::Unavailable,
-        None => match start_decode(ctx, &inbox, path, animate) {
+        None => match start_decode(ctx, &inbox, path, animate && !poster_first) {
             Start::Started => {
                 animations
                     .entries
@@ -1281,6 +1296,47 @@ mod tests {
         assert!(webp_moves(b"RIFF\0\0\0\0WEBPANIM"));
         assert!(!webp_moves(b"GIF89aANIM"));
         assert!(!webp_moves(b"RIFF"));
+    }
+
+    #[test]
+    fn hovered_sticker_poster_is_delivered_before_the_full_animation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = animated_webp(dir.path(), "preview.webp", 12);
+        assert!(
+            image::open(&path).is_ok(),
+            "the static preview decoder reads animated WebP too"
+        );
+        let ctx = egui::Context::default();
+        let limit = Instant::now() + Duration::from_secs(10);
+        loop {
+            let decoding = matches!(
+                cache(&ctx).0.lock().unwrap().entries.get(&path),
+                Some(Entry::Decoding)
+            );
+            if !decoding {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                    let _ = frame_poster_first(ui, &path, rect, true);
+                });
+                output.textures_delta.clear();
+            }
+            let deliveries = inbox(&ctx);
+            let pending = deliveries.0.lock().unwrap();
+            if let Some((_, Some(decoded), complete)) =
+                pending.iter().find(|(file, _, _)| file == &path)
+            {
+                assert!(
+                    !complete,
+                    "the first request decodes only the poster even on hover"
+                );
+                assert_eq!(decoded.frames.len(), 1);
+                break;
+            }
+            drop(pending);
+            assert!(Instant::now() < limit, "poster decoder did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// An animated WebP of `count` 8x8 frames that all differ.

@@ -8300,7 +8300,18 @@ fn picture(
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
+                let poster_first = view.plugins.media_poster_first("sticker");
+                let frame = if poster_first {
+                    animation::frame_poster_first(
+                        ui,
+                        path,
+                        rect,
+                        view.animate && response.hovered(),
+                    )
+                } else {
+                    animation::frame(ui, path, rect, view.animate && response.hovered())
+                };
+                match frame {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
@@ -8308,6 +8319,30 @@ fn picture(
                             Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                             Color32::WHITE,
                         );
+                    }
+                    _ if poster_first => {
+                        // The static loader has its own queue: a busy animation
+                        // decoder must not hide an already downloaded sticker.
+                        let preview = widgets::file_image(ui, path);
+                        match preview.load_for_size(ui.ctx(), rect.size()) {
+                            Ok(egui::load::TexturePoll::Ready { texture }) => {
+                                ui.painter().image(
+                                    texture.id,
+                                    rect,
+                                    Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)),
+                                    Color32::WHITE,
+                                );
+                            }
+                            Ok(egui::load::TexturePoll::Pending { .. }) => {
+                                ui.painter().rect_filled(rect, radius, palette.surface);
+                                theme::paint_spinner(ui, rect, 22.0, palette.accent);
+                                ui.ctx().request_repaint_after(Duration::from_millis(100));
+                            }
+                            Err(_) => {
+                                ui.painter().rect_filled(rect, radius, palette.surface);
+                                theme::paint_icon(ui, Icon::Sticker, rect, 32.0, palette.secondary);
+                            }
+                        }
                     }
                     _ => {
                         ui.painter().rect_filled(rect, radius, palette.surface);
@@ -10685,6 +10720,70 @@ mod tests {
             pin_notices: &[],
         };
         check(&view);
+    }
+
+    #[test]
+    fn bugfix_renders_a_sticker_preview_when_animation_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = dir.path().join("bugfix");
+        std::fs::create_dir(&plugin).unwrap();
+        std::fs::write(
+            plugin.join("plugin.json"),
+            include_str!("../../plugins/bugfix/plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("main.rhai"),
+            include_str!("../../plugins/bugfix/main.rhai"),
+        )
+        .unwrap();
+        let host = crate::plugins::Host::load(dir.path(), &Default::default());
+        let path = dir.path().join("still.webp");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]))
+            .save_with_format(&path, image::ImageFormat::WebP)
+            .unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|base| {
+            let view = View {
+                plugins: &host,
+                ..*base
+            };
+            for from_me in [false, true] {
+                let message = crate::archive::tests::message("fixture", "sticker", 0, from_me);
+                let mut media = media(Some(8), Some(8));
+                media.path = Some(path.clone());
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let mut texture_id = None;
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                        if let Ok(egui::load::TexturePoll::Ready { texture }) =
+                            widgets::file_image(ui, &path)
+                                .load_for_size(ui.ctx(), Vec2::splat(STICKER_SIDE))
+                        {
+                            texture_id = Some(texture.id);
+                        }
+                        // Incorrect animation metadata must still display the downloaded image.
+                        picture(
+                            ui,
+                            &view,
+                            &message,
+                            &media,
+                            300.0,
+                            Some(true),
+                            &mut Vec::new(),
+                        );
+                    });
+                    output.textures_delta.clear();
+                    if let Some(texture_id) = texture_id {
+                        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.texture_id == texture_id)));
+                        break;
+                    }
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        });
     }
 
     #[test]

@@ -274,9 +274,38 @@ fn bugfix_layout_uses_available_width_and_tracks_disable() {
     h.set_enabled("bugfix", true);
     std::fs::write(
         plugin.join("main.rhai"),
-        "fn on_layout(e,s,c) { #{state:s,width:99999.0} }",
+        "fn on_layout(e,s,c) { #{state:s,width:99999.0} } fn on_media_policy(e,s,c) { #{state:s,poster_first:false} }",
     )
     .unwrap();
     h.reload();
     assert_eq!(h.layout_width("chat_header_title", 120.0, 80.0), 120.0);
+}
+
+#[test]
+fn bugfix_sticker_preview_is_scoped_and_can_be_disabled() {
+    let (dir, mut h) = host();
+    let plugin = dir.path().join("bugfix");
+    std::fs::create_dir(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("plugin.json"),
+        include_str!("../../plugins/bugfix/plugin.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("main.rhai"),
+        include_str!("../../plugins/bugfix/main.rhai"),
+    )
+    .unwrap();
+    h.reload();
+    assert!(h.errors().is_empty());
+    assert!(h.media_poster_first("sticker"));
+    assert!(!h.media_poster_first("video"));
+    h.overrides.insert(
+        "bugfix".into(),
+        serde_json::json!({"sticker_preview":false}),
+    );
+    assert!(!h.media_poster_first("sticker"));
+    h.overrides.clear();
+    h.set_enabled("bugfix", false);
+    assert!(!h.media_poster_first("sticker"));
 }

@@ -5,3 +5,7 @@ fn on_layout(event, state, config) {
     }
     #{ state: state, width: width }
 }
+
+fn on_media_policy(event, state, config) {
+    #{ state: state, poster_first: event.kind == "sticker" && config.sticker_preview }
+}

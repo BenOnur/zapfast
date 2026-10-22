@@ -94,6 +94,19 @@ impl Host {
         );
         self.runtime.borrow_mut().values(hook, event, &self.enabled)
     }
+    /// Optional local rendering policies; no paths or message contents are exposed.
+    pub fn media_poster_first(&self, kind: &str) -> bool {
+        let mut event = Map::new();
+        event.insert("kind".into(), kind.into());
+        self.call("on_media_policy", event)
+            .into_iter()
+            .any(|(_, mut output)| {
+                output
+                    .remove("poster_first")
+                    .and_then(|v| v.try_cast::<bool>())
+                    .unwrap_or(false)
+            })
+    }
     /// Bounded layout policy; plugins cannot enlarge the parent allocation.
     pub fn layout_width(&self, region: &str, available: f32, fallback: f32) -> f32 {
         let available = available.max(0.0);

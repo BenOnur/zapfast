@@ -218,6 +218,7 @@ impl ScriptPlugins {
                         | "on_card"
                         | "on_composer_tools"
                         | "on_layout"
+                        | "on_media_policy"
                 )
             })
         {
