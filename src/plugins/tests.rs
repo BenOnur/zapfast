@@ -269,7 +269,15 @@ fn bugfix_layout_uses_available_width_and_tracks_disable() {
         );
     }
     assert_eq!(h.layout_width("other", 360.0, 80.0), 80.0);
+    assert_eq!(h.layout_width("message_row", 360.0, 900.0), 360.0);
+    h.overrides.insert(
+        "bugfix".into(),
+        serde_json::json!({"message_row_width":false}),
+    );
+    assert_eq!(h.layout_width("message_row", 360.0, 900.0), 900.0);
+    h.overrides.clear();
     h.set_enabled("bugfix", false);
+    assert_eq!(h.layout_width("message_row", 360.0, 900.0), 900.0);
     assert_eq!(h.layout_width("chat_header_title", 360.0, 80.0), 80.0);
     h.set_enabled("bugfix", true);
     std::fs::write(

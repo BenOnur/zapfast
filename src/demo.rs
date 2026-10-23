@@ -17499,6 +17499,61 @@ mod long_chat_tests {
         assert!(!laid_out(&ctx, &chat, ROWS / 2), "a far row is skipped");
     }
 
+    #[test]
+    fn own_history_bubbles_stay_inside_the_view_when_scrolling() {
+        let (mut app, ctx, chat, _clock) = long_chat();
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("bugfix");
+        std::fs::create_dir(&plugin).unwrap();
+        std::fs::write(
+            plugin.join("plugin.json"),
+            include_str!("../plugins/bugfix/plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("main.rhai"),
+            include_str!("../plugins/bugfix/main.rhai"),
+        )
+        .unwrap();
+        app.plugins = crate::plugins::Host::load(root.path(), &Default::default());
+        for (n, message) in app
+            .conversations
+            .get_mut(&chat)
+            .unwrap()
+            .messages
+            .iter_mut()
+            .enumerate()
+        {
+            message.from_me = true;
+            if n % 7 == 0 {
+                message.content = Content::Unsupported {
+                    what: "legacy attachment ".repeat(80),
+                };
+            }
+        }
+        for step in 0..15 {
+            let shapes = frame(
+                &mut app,
+                &ctx,
+                if step < 3 { Vec::new() } else { wheel(150.0) },
+            );
+            for shape in shapes {
+                if let egui::Shape::Text(text) = shape.shape
+                    && text.galley.text().starts_with("Row ")
+                    && shape.clip_rect.y_range().contains(text.pos.y)
+                {
+                    assert!(
+                        text.pos.x + text.galley.size().x <= shape.clip_rect.right() + 1.0,
+                        "own row escaped at step {step}: {:?} width {} clip {:?}",
+                        text.pos,
+                        text.galley.size().x,
+                        shape.clip_rect
+                    );
+                }
+            }
+        }
+    }
+
     /// Rows scrolled past are measured for the first time, and their real
     /// heights differ from the estimates, but what is on screen moves only
     /// with the scroll: the same distance for the same scroll every frame.

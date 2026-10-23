@@ -3826,6 +3826,35 @@ fn bubble(
     place: RunPlace,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // Earlier wide rows can enlarge the parent's minimum rect. A fresh row
+    // allocation keeps outgoing history anchored to the visible right edge.
+    let side = if view.palette.bubbles == theme::BubbleStyle::Messages {
+        MESSAGES_SIDE_MARGIN
+    } else {
+        WHATSAPP_SIDE_MARGIN
+    };
+    let available = (ui.clip_rect().right() - f32::from(side) - ui.max_rect().left()).max(0.0);
+    let width = view
+        .plugins
+        .layout_width("message_row", available, ui.available_width());
+    let bounds = Rect::from_min_max(
+        pos2(ui.max_rect().left(), ui.cursor().top()),
+        pos2(ui.max_rect().left() + width, ui.max_rect().bottom()),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(bounds), |ui| {
+        bubble_row(ui, view, message, album, place, actions)
+    })
+    .inner
+}
+
+fn bubble_row(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    album: Option<&[Message]>,
+    place: RunPlace,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
     let RunPlace {
         show_sender,
         show_avatar,
@@ -10720,6 +10749,81 @@ mod tests {
             pin_notices: &[],
         };
         check(&view);
+    }
+
+    #[test]
+    fn bugfix_bounds_own_rows_after_an_oversized_history_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = dir.path().join("bugfix");
+        std::fs::create_dir(&plugin).unwrap();
+        std::fs::write(
+            plugin.join("plugin.json"),
+            include_str!("../../plugins/bugfix/plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("main.rhai"),
+            include_str!("../../plugins/bugfix/main.rhai"),
+        )
+        .unwrap();
+        let mut host = crate::plugins::Host::load(dir.path(), &Default::default());
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|base| {
+            for enabled in [false, true] {
+                host.set_enabled("bugfix", enabled);
+                let view = View {
+                    plugins: &host,
+                    ..*base
+                };
+                let message = crate::archive::tests::message("fixture", "bounded-own", 0, true);
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(800.0, 400.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        // Model a preceding media/history row enlarging the parent's
+                        // minimum width, while the visible viewport remains 800px.
+                        ui.allocate_exact_size(vec2(1400.0, 1.0), Sense::hover());
+                        bubble(
+                            ui,
+                            &view,
+                            &message,
+                            None,
+                            RunPlace {
+                                show_sender: false,
+                                show_avatar: false,
+                                tailed: false,
+                            },
+                            &mut Vec::new(),
+                        )
+                        .unwrap();
+                        // The returned click response can retain last frame's
+                        // rect; the painted allocation is stored separately.
+                        let drawn = ui
+                            .ctx()
+                            .data(|data| {
+                                data.get_temp::<Rect>(
+                                    bubble_id(&view.chat.id, &message.id).with("rect"),
+                                )
+                            })
+                            .unwrap();
+                        assert_eq!(
+                            drawn.right() <= ui.clip_rect().right(),
+                            enabled,
+                            "plugin {enabled}: {:?} in {:?}",
+                            drawn,
+                            ui.clip_rect()
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+        });
     }
 
     #[test]

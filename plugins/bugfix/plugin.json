@@ -10,11 +10,13 @@
   ],
   "settings": {
     "header_title_width": true,
+    "message_row_width": true,
     "sticker_preview": true
   },
   "ui": {
     "labels": {
       "header_title_width": "Sohbet adı kullanılabilir alanı doldursun",
+      "message_row_width": "Kaydırırken mesajları görünür alanın içinde tut",
       "sticker_preview": "Çıkartmaları animasyonu beklemeden göster"
     }
   }

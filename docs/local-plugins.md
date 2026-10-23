@@ -43,10 +43,12 @@ The optional `quick_stickers` plugin adds a sticker icon immediately to the righ
 
 The optional plugin is named `bugfix`, so further fixes can be added to the same folder. Its first setting, `header_title_width`, lets the chat name use all space left after reserving header buttons once. Turning it off restores the original width calculation.
 
-`on_layout(event, state, config)` receives `region`, `available_width`, and `default_width`; returns `state` and floating point `width`. The host currently exposes `chat_header_title`. Returned widths must be finite and are clamped to the parent allocation. The last valid enabled plugin wins. No chat text is provided. Adding more layout regions or capabilities requires a host update; changes within an exposed region reload from files.
+`on_layout(event, state, config)` receives `region`, `available_width`, and `default_width`; returns `state` and floating point `width`. The host currently exposes `chat_header_title` and `message_row`. Returned widths must be finite and are clamped to the parent allocation. The last valid enabled plugin wins. No chat text is provided. Adding more layout regions or capabilities requires a host update; changes within an exposed region reload from files.
 
 ### Sticker previews
 
 `bugfix` also provides `sticker_preview`: downloaded animated stickers show a static preview while their animation decodes, and decode their poster first even while hovered. This works for sent and received stickers. Download/network time is still required for files not present locally.
 
 `on_media_policy(event,state,config)` receives `kind` (currently `sticker`) and returns `state` and boolean `poster_first`. It exposes no message text or file paths. Disabling the plugin or setting restores the original rendering path. A host containing this hook is required.
+
+`bugfix.message_row_width` keeps each message row anchored inside the visible transcript when scrolling older messages, including self chats. It defaults to enabled and can be disabled separately. Requires a host exposing the `message_row` region; older API v3 hosts do not implement it. It does not decode unsupported messages or recover unavailable media.
