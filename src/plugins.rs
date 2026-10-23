@@ -94,6 +94,19 @@ impl Host {
         );
         self.runtime.borrow_mut().values(hook, event, &self.enabled)
     }
+    /// Local gesture policy; plugins receive no chat or message contents.
+    pub fn message_drag_requires_ctrl(&self) -> bool {
+        let mut event = Map::new();
+        event.insert("gesture".into(), "message_drag".into());
+        self.call("on_input_policy", event)
+            .into_iter()
+            .any(|(_, mut output)| {
+                output
+                    .remove("require_ctrl")
+                    .and_then(|value| value.try_cast::<bool>())
+                    .unwrap_or(false)
+            })
+    }
     /// Optional local rendering policies; no paths or message contents are exposed.
     pub fn media_poster_first(&self, kind: &str) -> bool {
         let mut event = Map::new();

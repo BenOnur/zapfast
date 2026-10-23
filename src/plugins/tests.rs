@@ -7,6 +7,38 @@ fn host() -> (tempfile::TempDir, Host) {
     assert!(host.errors().is_empty(), "{:?}", host.errors());
     (dir, host)
 }
+
+#[test]
+fn quality_of_life_ctrl_policy_tracks_settings_disable_and_reload() {
+    let (dir, mut h) = host();
+    assert!(!h.message_drag_requires_ctrl());
+    let plugin = dir.path().join("quality_of_life");
+    std::fs::create_dir(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("plugin.json"),
+        include_str!("../../plugins/quality_of_life/plugin.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.join("main.rhai"),
+        include_str!("../../plugins/quality_of_life/main.rhai"),
+    )
+    .unwrap();
+    h.reload();
+    assert!(h.errors().is_empty(), "{:?}", h.errors());
+    assert!(h.message_drag_requires_ctrl());
+    h.overrides.insert(
+        "quality_of_life".into(),
+        serde_json::json!({"ctrl_message_drag":false}),
+    );
+    assert!(!h.message_drag_requires_ctrl());
+    h.overrides.clear();
+    h.set_enabled("quality_of_life", false);
+    assert!(!h.message_drag_requires_ctrl());
+    h.set_enabled("quality_of_life", true);
+    h.reload();
+    assert!(h.message_drag_requires_ctrl());
+}
 fn message() -> Message {
     Message {
         id: "fixture-id".into(),

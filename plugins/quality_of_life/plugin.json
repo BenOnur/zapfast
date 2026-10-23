@@ -1,0 +1,12 @@
+{
+  "api_version": 3,
+  "id": "quality_of_life",
+  "name": "Quality of Life",
+  "description": "Günlük kullanım için küçük kontrol iyileştirmeleri.",
+  "default_enabled": true,
+  "hooks": ["on_input_policy"],
+  "settings": {"ctrl_message_drag": true},
+  "ui": {
+    "labels": {"ctrl_message_drag": "Mesajları yalnız Ctrl + sol tuş sürüklemesiyle seç"}
+  }
+}

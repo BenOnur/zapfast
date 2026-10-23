@@ -2586,10 +2586,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
         .as_ref()
         .filter(|sweep| sweep.chat == chat.id)
         .map(|sweep| (sweep.anchor.clone(), sweep.to.clone()));
-    if app.sweep.is_some() && (sweep.is_none() || !ui.input(|input| input.pointer.primary_down())) {
+    let drag_allowed =
+        !app.plugins.message_drag_requires_ctrl() || ui.input(|input| input.modifiers.ctrl);
+    if app.sweep.is_some()
+        && (sweep.is_none() || !ui.input(|input| input.pointer.primary_down()) || !drag_allowed)
+    {
         actions.push(Action::EndSweep);
     }
-    let sweep = sweep.filter(|_| ui.input(|input| input.pointer.primary_down()));
+    let sweep = sweep.filter(|_| drag_allowed && ui.input(|input| input.pointer.primary_down()));
     let sweep_pointer = ui.input(|input| input.pointer.latest_pos());
     // The row under the pointer: the last laid-out row whose top it is
     // below, or the first one when it is above them all.
@@ -3123,7 +3127,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     );
                                 });
                             }
-                            if pick.drag_started() {
+                            if pick.drag_started_by(egui::PointerButton::Primary) && drag_allowed {
                                 actions.push(Action::SweepMessages {
                                     anchor: message.id.clone(),
                                     to: message.id.clone(),
@@ -3894,7 +3898,10 @@ fn bubble_row(
         if strip.clicked() {
             actions.push(Action::FocusComposer);
         }
-        if strip.drag_started() {
+        if strip.drag_started_by(egui::PointerButton::Primary)
+            && (!view.plugins.message_drag_requires_ctrl()
+                || ui.input(|input| input.modifiers.ctrl))
+        {
             actions.push(Action::SweepMessages {
                 anchor: message.id.clone(),
                 to: message.id.clone(),
@@ -4502,7 +4509,14 @@ fn bubble_frame(
     // the first frame's rect.
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
-    let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
+    let ctrl_drag =
+        ui.input(|input| input.modifiers.ctrl) && view.plugins.message_drag_requires_ctrl();
+    let sense = if ctrl_drag {
+        Sense::click_and_drag()
+    } else {
+        Sense::CLICK
+    };
+    let early = previous.map(|rect| ui.interact(rect, bubble_id, sense));
     // Painted once the contents are measured, beneath them.
     let backdrop = ui.painter().add(egui::Shape::Noop);
     let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
@@ -4626,7 +4640,13 @@ fn bubble_frame(
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id, inner.response.rect));
-    let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, Sense::CLICK));
+    let bubble = early.unwrap_or_else(|| ui.interact(inner.response.rect, bubble_id, sense));
+    if ctrl_drag && bubble.drag_started_by(egui::PointerButton::Primary) {
+        actions.push(Action::SweepMessages {
+            anchor: message.id.clone(),
+            to: message.id.clone(),
+        });
+    }
     if view.selecting {
         return bubble;
     }
@@ -7978,7 +7998,19 @@ fn rich_body(
     } else {
         rect.min
     };
-    if visible || selection_alive {
+    let ctrl_drag =
+        ui.input(|input| input.modifiers.ctrl) && view.plugins.message_drag_requires_ctrl();
+    if ctrl_drag && response.drag_started_by(egui::PointerButton::Primary) {
+        actions.push(Action::SweepMessages {
+            anchor: message.id.clone(),
+            to: message.id.clone(),
+        });
+    }
+    if ctrl_drag && ui.input(|input| input.pointer.primary_down()) {
+        if visible {
+            markup::paint(ui, &laid, origin, palette.text);
+        }
+    } else if visible || selection_alive {
         markup::paint_selectable(ui, &laid, &response, origin, palette.text, visible);
     }
     let message_number = crate::i18n::gettext(view.locale, "Message");

@@ -39,6 +39,12 @@ The optional `quick_stickers` plugin adds a sticker icon immediately to the righ
 
 `on_composer_tools(event, state, config)` returns `state`, a nonempty `label` (up to 80 characters), and `command`: `open_stickers`, `open_emoji`, or `open_gifs`. The host draws up to four buttons with native icons, in plugin order, and uses the existing picker actions. This hook receives account/config context, without chat contents. Disabling or removing a plugin removes its button. The four existing seeded plugins are unchanged.
 
+## Quality of Life: Ctrl-drag message selection
+
+The optional `quality_of_life` plugin requires Ctrl + primary-button drag for message-range selection. Plain dragging no longer starts or extends a message sweep, including while selection mode is already open. Ctrl-drag works on text, bubble padding and non-text bubbles; releasing Ctrl stops the active sweep while keeping the messages already selected. Plain text selection, checkboxes, context-menu selection and existing click shortcuts remain available. Disabling the plugin or its `ctrl_message_drag` setting restores the original drag policy.
+
+API v3 hosts must support the new `on_input_policy(event,state,config)` hook. The event contains `gesture: "message_drag"`, without message contents. Return `state` and optional boolean `require_ctrl`. Any enabled policy requiring Ctrl applies; absent/invalid results use the original behavior. Older hosts reject this hook instead of silently claiming support. The first installation requires the updated host; later changes to this policy reload from plugin files.
+
 ## Layout fixes (API v3)
 
 The optional plugin is named `bugfix`, so further fixes can be added to the same folder. Its first setting, `header_title_width`, lets the chat name use all space left after reserving header buttons once. Turning it off restores the original width calculation.

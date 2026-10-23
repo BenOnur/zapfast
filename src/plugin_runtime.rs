@@ -219,6 +219,7 @@ impl ScriptPlugins {
                         | "on_composer_tools"
                         | "on_layout"
                         | "on_media_policy"
+                        | "on_input_policy"
                 )
             })
         {

@@ -10279,6 +10279,134 @@ mod tests {
             .unwrap_or_default()
     }
 
+    #[test]
+    fn quality_of_life_requires_ctrl_for_message_drags_and_ends_on_ctrl_release() {
+        use crate::model::Action;
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("quality_of_life");
+        std::fs::create_dir(&plugin).unwrap();
+        std::fs::write(
+            plugin.join("plugin.json"),
+            include_str!("../plugins/quality_of_life/plugin.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("main.rhai"),
+            include_str!("../plugins/quality_of_life/main.rhai"),
+        )
+        .unwrap();
+        for ctrl in [false, true] {
+            for selecting in [false, true] {
+                // Empty row strip, selectable text, and a non-text attachment.
+                for target in 0..3 {
+                    let (mut app, ctx, chat) = sweep_chat(8);
+                    app.plugins = crate::plugins::Host::load(root.path(), &Default::default());
+                    if target == 2 {
+                        app.conversations.get_mut(&chat).unwrap().messages[3].content =
+                            Content::Document {
+                                media: media("application/pdf", 128, None, None),
+                                file_name: "fixture.pdf".into(),
+                                caption: None,
+                                pages: Some(1),
+                            };
+                    }
+                    if selecting {
+                        app.actions.push(Action::SelectMessage("m000".into()));
+                    }
+                    render(&mut app, &ctx);
+                    let mods = if ctrl {
+                        egui::Modifiers::CTRL
+                    } else {
+                        egui::Modifiers::NONE
+                    };
+                    frame_with(&mut app, &ctx, vec![egui::Event::ModifiersChanged(mods)]);
+                    let point = |id: &str| {
+                        if target == 0 {
+                            beside(&ctx, &chat, id, id == "m004")
+                        } else {
+                            drawn_rect(&ctx, &chat, id, if target == 1 { "body" } else { "rect" })
+                                .center()
+                        }
+                    };
+                    let (from, via, to) = (point("m003"), point("m004"), point("m005"));
+                    let button = |pos, pressed, modifiers| egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers,
+                    };
+                    frame_with(
+                        &mut app,
+                        &ctx,
+                        vec![egui::Event::PointerMoved(from), button(from, true, mods)],
+                    );
+                    for pos in [via, to, to] {
+                        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+                    }
+                    let mut expected = if selecting {
+                        vec!["m000".to_owned()]
+                    } else {
+                        Vec::new()
+                    };
+                    if ctrl {
+                        expected.extend(["m003", "m004", "m005"].map(str::to_owned));
+                    }
+                    assert_eq!(
+                        selected_ids(&app),
+                        expected,
+                        "ctrl={ctrl} selecting={selecting} target={target}"
+                    );
+                    if !ctrl && !selecting && target == 1 {
+                        assert!(text_selected(&ctx), "plain dragging still selects text");
+                    }
+                    if ctrl {
+                        assert!(
+                            !text_selected(&ctx),
+                            "Ctrl-drag selects messages rather than text"
+                        );
+                        frame_with(
+                            &mut app,
+                            &ctx,
+                            vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+                        );
+                        assert!(app.sweep.is_none(), "releasing Ctrl ends the held sweep");
+                        let further = drawn_rect(&ctx, &chat, "m006", "rect").center();
+                        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(further)]);
+                        assert_eq!(
+                            selected_ids(&app),
+                            expected,
+                            "no range extension after Ctrl release"
+                        );
+                    }
+                    frame_with(
+                        &mut app,
+                        &ctx,
+                        vec![
+                            button(to, false, egui::Modifiers::NONE),
+                            egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                        ],
+                    );
+                    assert_eq!(selected_ids(&app), expected);
+                    if !ctrl && !selecting && target == 1 {
+                        frame_with(
+                            &mut app,
+                            &ctx,
+                            vec![egui::Event::ModifiersChanged(egui::Modifiers::CTRL)],
+                        );
+                        assert!(
+                            text_selected(&ctx),
+                            "Ctrl alone keeps the text selection for copying"
+                        );
+                        assert!(
+                            !copied_text(&mut app, &ctx, egui::Event::Copy).is_empty(),
+                            "Ctrl+C still copies selected text"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn text_selected(ctx: &egui::Context) -> bool {
         ctx.plugin_opt::<egui::text_selection::LabelSelectionState>()
             .is_some_and(|plugin| plugin.lock().has_selection())
